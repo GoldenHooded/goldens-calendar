@@ -196,7 +196,7 @@ function morph(el, html, anim = true) {
 function render() {
   if (!S) return;
   document.body.classList.toggle('web', !!S.web);
-  if (S.web && !aur.on) (setAurora(true), document.body.classList.add('has-glass'));
+  if (S.web && aur.on) setAurora(false); // en el móvil, fondo negro liso (más fluido)
   renderLogin();
   document.documentElement.style.setProperty('--alpha', S.db.settings.opacity ?? 0.55);
   renderHead();
@@ -207,6 +207,7 @@ function render() {
 }
 
 function renderHead() {
+  if (S.web) return renderMobileHead();
   const m = parse(ui.month);
   morph($('#head'), `
     <div class="month"><span class="n" id="mname">${MONTHS[m.getMonth()]}</span><span class="y">${m.getFullYear()}</span></div>
@@ -264,6 +265,7 @@ function weekItems(ws) {
 }
 
 function renderCal(dir = 0) {
+  if (S.web) return renderMobile(dir);
   const { from } = gridRange();
   const month = parse(ui.month).getMonth();
   const weekH = $('#weeks').clientHeight / 6 || 80;
@@ -562,6 +564,7 @@ function place(a, w, h) {
 const px = (r) => ({ left: r.left + 'px', top: r.top + 'px', width: r.width + 'px', height: r.height + 'px' });
 
 function openCard(v, anchorEl) {
+  if (S.web) return openSheet(v);
   const card = $('#card');
   const a = relRect(anchorEl);
   const html = cardHTML(v);
@@ -595,6 +598,7 @@ function afterCard() {
   setTimeout(() => $('[autofocus]', card)?.focus(), 250);
 }
 function swapCard(v) {
+  if (S.web) return swapSheet(v);
   const card = $('#card');
   const html = cardHTML(v);
   if (!html) return closeCard();
@@ -624,6 +628,7 @@ function updateCard() {
   inner.classList.remove('fade');
   inner.scrollTop = scroll;
   if (focus) $(`[data-key="${focus}"]`, inner)?.focus();
+  if (S.web) return animateValues(card); // la hoja crece sola con su contenido
   const H = $('#widget').clientHeight;
   const h = Math.min(measure(html, card.offsetWidth), H - 24);
   const oldH = card.offsetHeight;
@@ -638,6 +643,7 @@ function updateCard() {
 function closeCard(instant) {
   const card = $('#card');
   if (!ui.card) return;
+  if (S.web) return closeSheet(instant);
   const anchor = ui.card.anchor && $(`[data-key="${ui.card.anchor}"]`);
   ui.card = null;
   if (instant || !card.classList.contains('show')) return card.classList.remove('show');
@@ -648,6 +654,157 @@ function closeCard(instant) {
   $('.card-in', card)?.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 140, fill: 'forwards' });
   card.animate(kf, { duration: 340, easing: OUT }).onfinish = () => { if (!ui.card) card.classList.remove('show'); };
 }
+
+
+// ================= Móvil: estilo Calendario del iPhone =================
+// Mes compacto con puntos de color, agenda del día elegido debajo, barra inferior y hojas que suben.
+function mItems(d) {
+  const out = [];
+  for (const m of S.db.milestones) if (m.date === d && inLayer('ms', m)) out.push({ type: 'ms', id: m.id, color: proj(m.projectId).color, title: m.title, sub: `${KIND_LABEL[m.kind]} · ${esc(proj(m.projectId).name)} · ${S.stats.milestones[m.id].pct}%`, time: m.time || '', icon: KIND_ICON[m.kind] });
+  for (const g of S.db.goals || []) if (g.date === d && inLayer('goal', g)) out.push({ type: 'goal', id: g.id, color: goalColor(g), title: g.title, sub: `Objetivo${g.projectId ? ' · ' + esc(proj(g.projectId).name) : ''}`, time: g.time || '', done: g.done, icon: 'target' });
+  for (const b of S.db.blocks) if (b.date <= d && blockEnd(b) >= d && inLayer('blk', b)) {
+    const st = S.stats.blocks[b.id];
+    out.push({ type: 'block', id: b.id, color: proj(b.projectId).color, title: b.title, sub: `${esc(proj(b.projectId).name)} · ${st.manual ? (b.done ? 'hecho' : 'pendiente') : `${st.done}/${st.total} tareas`}`, time: b.start ? `${b.start}${b.end ? '–' + b.end : ''}` : '', done: st.pct === 100 });
+  }
+  for (const e of S.db.extEvents || []) if (e.date <= d && (e.endDate || e.date) >= d && inLayer('ext', e)) out.push({ type: 'ext', id: e.id, color: subColor(e.subId), title: e.title, sub: esc(byId(S.db.subscriptions || [], e.subId)?.name || ''), time: e.start ? `${e.start}${e.end ? '–' + e.end : ''}` : '' });
+  // Como en iOS: primero lo de todo el día, luego por hora
+  return out.sort((a, b) => (a.time ? 1 : 0) - (b.time ? 1 : 0) || a.time.localeCompare(b.time));
+}
+function renderMobile(dir = 0) {
+  const { from } = gridRange();
+  const month = parse(ui.month).getMonth();
+  if (!ui.selDate || parse(ui.selDate).getMonth() !== month) ui.selDate = S.today.slice(0, 8) + '01' === ui.month ? S.today : ui.month;
+  let html = '';
+  for (let w = 0; w < 6; w++) {
+    let row = '';
+    for (let c = 0; c < 7; c++) {
+      const d = addDays(from, w * 7 + c);
+      const items = mItems(d);
+      const dots = items.slice(0, 3).map((it) => `<i style="--c:${it.color}"></i>`).join('');
+      row += `<button class="mday ${parse(d).getMonth() !== month ? 'out' : ''} ${d === S.today ? 'today' : ''} ${d === ui.selDate ? 'sel' : ''}" data-act="msel" data-date="${d}" data-key="md-${d}" data-drop="${d}">
+        <span class="mnum">${parse(d).getDate()}</span><span class="mdots">${dots}</span></button>`;
+    }
+    html += `<div class="mweek">${row}</div>`;
+  }
+  const weeks = $('#weeks');
+  weeks.classList.add('mgrid');
+  if (dir) weeks.innerHTML = html;
+  else morph(weeks, html, false);
+  if (dir) {
+    weeks.classList.remove('l', 'r');
+    void weeks.offsetWidth;
+    weeks.classList.add(dir < 0 ? 'l' : 'r');
+  }
+  renderAgenda();
+  renderMBar();
+}
+function renderAgenda() {
+  let el = $('#agenda');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'agenda';
+    $('#widget').appendChild(el);
+  }
+  const d = ui.selDate;
+  const items = mItems(d);
+  const n = diffDays(S.today, d);
+  morph(el, `
+    <div class="ag-h" data-key="agh"><span>${fmtLong(d)}</span><span class="ag-rel">${n === 0 ? 'Hoy' : rel(n)}</span></div>
+    ${items.map((it) => `<div class="arow ${it.done ? 'done' : ''}" style="--c:${it.color}" data-act="open" data-type="${it.type}" data-id="${esc(it.id)}" data-key="ag-${esc(it.id)}">
+      <span class="abar"></span>
+      <div class="agrow"><div class="at">${it.icon ? icon(it.icon, 13) : ''}<span>${esc(it.title)}</span></div><div class="as">${it.sub}</div></div>
+      <div class="atime">${it.time || 'todo el día'}</div>
+      ${it.type === 'goal' ? `<button class="acheck ${it.done ? 'on' : ''}" data-act="toggle-goal" data-id="${it.id}" aria-label="Conseguido">${icon('check', 14)}</button>` : ''}
+    </div>`).join('') || `<div class="ag-empty" data-key="agempty">Nada este día.<br><button class="lnk" data-act="m-new">Añadir algo</button></div>`}`);
+}
+function renderMBar() {
+  let el = $('#mbar');
+  if (!el) {
+    el = document.createElement('nav');
+    el.id = 'mbar';
+    $('#widget').appendChild(el);
+  }
+  morph(el, `<button data-act="today">Hoy</button><button data-act="layer-menu" data-key="mb-layer">${icon('layers', 16)}<span>${esc(activeLayer()?.name || 'Capas')}</span></button><button data-act="how-open">¿Cómo vas?</button>`);
+}
+function renderMobileHead() {
+  const m = parse(ui.month);
+  morph($('#head'), `
+    <div class="mh-top"><button class="mh-year" data-act="today">${icon('chevL', 18)}<span>${m.getFullYear()}</span></button><div class="spacer"></div>
+      <button class="mh-btn" data-act="how-view" data-v="organize" title="Organizar">${icon('folder', 20)}</button>
+      <button class="mh-btn" data-act="m-new" title="Añadir">${icon('plus', 22)}</button></div>
+    <div class="mh-title"><span class="n" id="mname">${MONTHS[m.getMonth()]}</span>
+      <span class="mh-nav"><button class="mh-btn" data-act="month" data-d="-1">${icon('chevL', 18)}</button><button class="mh-btn" data-act="month" data-d="1">${icon('chevR', 18)}</button></span></div>
+    ${ui.layerMenu ? layerMenu() : ''}`);
+  $('#weekdays').innerHTML = ['L', 'M', 'X', 'J', 'V', 'S', 'D'].map((d) => `<div>${d}</div>`).join('');
+}
+
+// --- Hojas que suben desde abajo (sustituyen a las tarjetas flotantes en el móvil) ---
+function sheetDim(on) {
+  let dim = $('#sheet-dim');
+  if (!dim) {
+    dim = document.createElement('div');
+    dim.id = 'sheet-dim';
+    dim.addEventListener('click', () => closeCard());
+    $('#widget').appendChild(dim);
+  }
+  dim.classList.toggle('on', on);
+}
+function openSheet(v) {
+  const card = $('#card');
+  const html = cardHTML(v);
+  if (!html) return;
+  ui.card = { ...v, anchor: null };
+  card.removeAttribute('style');
+  card.innerHTML = `<div class="grabber"></div><div class="card-in">${html}</div>`;
+  card.classList.add('show', 'sheet');
+  sheetDim(true);
+  card.animate([{ transform: 'translateY(100%)' }, { transform: 'none' }], { duration: 420, easing: 'cubic-bezier(0.2, 0.9, 0.25, 1)' });
+  afterCard();
+}
+function swapSheet(v) {
+  const card = $('#card');
+  const html = cardHTML(v);
+  if (!html) return closeCard();
+  ui.card = { ...v, anchor: null };
+  const h0 = card.offsetHeight;
+  card.innerHTML = `<div class="grabber"></div><div class="card-in fade">${html}</div>`;
+  const h1 = card.offsetHeight;
+  if (Math.abs(h1 - h0) > 2) card.animate([{ height: h0 + 'px' }, { height: h1 + 'px' }], { duration: 320, easing: 'cubic-bezier(0.2, 0.9, 0.25, 1)' });
+  afterCard();
+}
+function closeSheet(instant) {
+  const card = $('#card');
+  ui.card = null;
+  sheetDim(false);
+  if (instant) return card.classList.remove('show');
+  card.animate([{ transform: 'none' }, { transform: 'translateY(105%)' }], { duration: 260, easing: 'cubic-bezier(0.4, 0, 1, 1)', fill: 'forwards' }).onfinish = (a) => {
+    if (!ui.card) card.classList.remove('show');
+    a.target?.cancel?.();
+  };
+}
+// Arrastrar la hoja hacia abajo la cierra
+(() => {
+  let y0 = null, dy = 0;
+  document.addEventListener('touchstart', (e) => {
+    const card = e.target.closest('#card.sheet');
+    if (!card) return;
+    const inner = $('.card-in', card);
+    if (e.target.closest('.grabber') || (inner && inner.scrollTop <= 0)) (y0 = e.touches[0].clientY), (dy = 0);
+  }, { passive: true });
+  document.addEventListener('touchmove', (e) => {
+    if (y0 === null) return;
+    dy = Math.max(0, e.touches[0].clientY - y0);
+    $('#card').style.transform = `translateY(${dy}px)`;
+  }, { passive: true });
+  document.addEventListener('touchend', () => {
+    if (y0 === null) return;
+    const card = $('#card');
+    y0 = null;
+    if (dy > 110) closeSheet();
+    card.animate([{ transform: card.style.transform }, { transform: 'none' }], { duration: 250, easing: OUT });
+    card.style.transform = '';
+  }, { passive: true });
+})();
 
 // ---------- "¿Cómo vas?" ----------
 function greeting() {
@@ -849,7 +1006,7 @@ document.addEventListener('mouseleave', () => { if (ui.how === 'near') { ui.how 
 // Puntos magnéticos
 let dotPos = null, dotRaf = 0;
 function magnetDots(e) {
-  if (dotRaf) return;
+  if (dotRaf || S?.web) return;
   dotRaf = requestAnimationFrame(() => {
     dotRaf = 0;
     const dots = $$('#dots i');
@@ -963,7 +1120,7 @@ function popCheck(el, done) {
 }
 const actions = {
   month: (el) => changeMonth(+el.dataset.d),
-  today: () => goMonth(S.today.slice(0, 8) + '01', S.today < ui.month ? -1 : 1),
+  today: () => { ui.selDate = S.today; return goMonth(S.today.slice(0, 8) + '01', S.today < ui.month ? -1 : 1); },
   demo: async () => { await api.demo(); await refresh(); toast(`${icon('spark', 14)} Ejemplo cargado`); },
   open: (el) => {
     const v = { type: el.dataset.type, id: el.dataset.id };
@@ -1090,6 +1247,17 @@ const actions = {
   'cloud-signup': () => cloudAuth('up'),
   'cloud-sync': async () => { await api.cloudSync(); await refresh(); renderHow(true); },
   'cloud-signout': (el) => confirmIn(el, async () => { await api.cloudSignOut(); await refresh(); renderHow(true); }),
+  msel: (el) => {
+    if (ui.selDate === el.dataset.date) return openCard({ type: 'day', date: el.dataset.date }, el); // segundo toque: el día completo
+    const prevSel = $('.mday.sel');
+    prevSel?.classList.remove('sel');
+    el.classList.add('sel');
+    ui.selDate = el.dataset.date;
+    if (parse(ui.selDate).getMonth() !== parse(ui.month).getMonth()) return goMonth(ui.selDate.slice(0, 8) + '01', ui.selDate < ui.month ? -1 : 1);
+    renderAgenda();
+  },
+  'm-new': () => openCard({ type: 'day', date: ui.selDate || S.today }, document.body),
+  'how-open': () => openHow(),
   'check-account': async () => { const a = await api.checkAccount(); toast(a.ok ? `${icon('check', 14)} Cuenta de Claude conectada` : 'No hay sesión de Claude en este PC'); await refresh(); renderHow(); },
   forget: async (el) => { await api.forget(el.dataset.id); memCache = await api.memories(); renderHow(); },
   'copy-mcp': async () => { api.copy(JSON.stringify(await api.mcpConfig(), null, 2)); toast(`${icon('check', 14)} Configuración MCP copiada`); },
@@ -1519,6 +1687,7 @@ const RIPPLE = 'button, .list-row, .task, .pchip, .bar, .cell, .layer-pill, .top
 window.addEventListener('pointerdown', (e) => {
   const el = e.target.closest(RIPPLE);
   if (!el || e.target.closest('input, textarea, select')) return;
+  if (S?.web && el.matches('.mday, #mbar button, .mh-btn, .mh-year, .acheck')) return; // en el móvil, la pulsación propia de iOS
   const r = el.getBoundingClientRect();
   const cs = getComputedStyle(el);
   const clip = document.createElement('div');
