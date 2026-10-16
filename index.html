@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+    <meta name="theme-color" content="#faf9f5" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#262624" media="(prefers-color-scheme: dark)" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Temario" />
+    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="icon" href="icon-192.png" />
+    <link rel="apple-touch-icon" href="icon-180.png" />
+    <title>Temario</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body class="web">
+    <div id="widget">
+      <div id="glass"><canvas id="aurora"></canvas></div>
+      <header class="head" id="head"></header>
+      <div class="weekdays" id="weekdays"></div>
+      <div class="cal" id="cal">
+        <div class="dots" id="dots"></div>
+        <div class="weeks" id="weeks"></div>
+      </div>
+      <div class="how" id="how"></div>
+      <div class="card" id="card"></div>
+      <div class="agent" id="agent"></div>
+      <div class="reply" id="reply"></div>
+      <div class="grip" id="grip"></div>
+      <div id="toast-root"></div>
+      <div id="fx"></div>
+    </div>
+    <script src="web.js"></script>
+    <script src="icons.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>
