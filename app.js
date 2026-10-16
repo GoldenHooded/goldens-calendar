@@ -780,6 +780,10 @@ function cloudSection() {
       <div class="grow"><div class="ttl">${c.state === 'syncing' ? 'Sincronizando…' : c.state === 'error' ? 'Error al sincronizar' : 'Sincronizado'}</div>
       <div class="meta">${esc(c.email)}${when ? ' · ' + when : ''}${c.error ? ' · ' + esc(c.error) : ''}</div></div>
       <button class="ibtn" data-act="cloud-sync" title="Sincronizar ahora">${icon('redo', 13)}</button><button class="btn plain" data-act="cloud-signout" style="flex:none">Salir</button></div>
+      ${ui.pwOpen ? `<div class="field" data-key="pw-change"><span>Nueva contraseña (la usarás también en el móvil)</span>
+        <div class="row2"><input class="input" data-new-pw type="password" autocomplete="new-password" placeholder="Mínimo 6 caracteres"><button class="btn primary" data-act="cloud-setpw" style="flex:none">Guardar</button></div>
+        <div class="cloud-msg ${ui.pwMsg?.kind || ''}">${ui.pwMsg ? esc(ui.pwMsg.text) : ''}</div></div>`
+        : `<div class="c-actions" style="margin-top:8px"><button class="btn" data-act="cloud-pw">Cambiar contraseña</button></div>`}
       ${c.mobileUrl ? `<div class="c-meta desk-only" style="margin-top:6px">App del móvil: <a class="lnk" href="${esc(c.mobileUrl)}" target="_blank">${esc(c.mobileUrl.replace(/^https?:\/\//, ''))}</a></div>` : ''}`;
   }
   return body;
@@ -1069,6 +1073,19 @@ const actions = {
   },
   'refresh-sub': async (el) => { el.classList.add('spin'); await api.refreshSubs(el.dataset.id); await refresh(); renderHow(true); },
   'del-sub': (el) => confirmIn(el, async () => { await run('delete_item', { type: 'subscription', id: el.dataset.id }); await refresh(); renderHow(true); }),
+  'cloud-pw': () => { ui.pwOpen = true; ui.pwMsg = null; renderHow(true); setTimeout(() => $('[data-new-pw]')?.focus(), 80); },
+  'cloud-setpw': async () => {
+    const pw = $('[data-new-pw]')?.value || '';
+    const show = (msg) => { ui.pwMsg = msg; const box = $('[data-key="pw-change"] .cloud-msg'); if (box) (box.className = 'cloud-msg ' + msg.kind), (box.textContent = msg.text); };
+    if (pw.length < 6) return show({ kind: 'err', text: 'Mínimo 6 caracteres.' });
+    try {
+      await api.cloudSetPassword(pw);
+      show({ kind: 'ok', text: 'Contraseña cambiada. Úsala para entrar en el móvil.' });
+      setTimeout(() => { ui.pwOpen = false; ui.pwMsg = null; renderHow(true); }, 2500);
+    } catch (e) {
+      show({ kind: 'err', text: cleanErr(e) });
+    }
+  },
   'cloud-signin': () => cloudAuth('in'),
   'cloud-signup': () => cloudAuth('up'),
   'cloud-sync': async () => { await api.cloudSync(); await refresh(); renderHow(true); },
@@ -1360,19 +1377,22 @@ function placeGlass() {
   el.style.backgroundSize = `${bw}px ${bh}px`;
   el.style.backgroundPosition = `${ox - ex}px ${oy - ey}px`;
 }
-// --- Fondo aurora: manchas de 2–3 tonos muy difuminadas que reaccionan al ratón, a los clics y al arrastre ---
+// --- Fondo: el color normal del panel; los brillos viven solo en los bordes (sobre todo abajo) y donde
+// mantienes pulsado, que brota y crece mientras sigues pulsando ---
 const AURORA = {
-  dark: { base: [15, 14, 18], colors: [[217, 119, 87], [104, 86, 214], [34, 66, 160]], blend: 'lighter', power: 0.2 },
-  light: { base: [243, 241, 235], colors: [[226, 128, 96], [140, 118, 226], [96, 146, 226]], blend: 'source-over', power: 0.2 },
+  dark: { base: [30, 30, 28], colors: [[217, 119, 87], [104, 86, 214], [34, 66, 160]], blend: 'lighter', power: 0.3 },
+  light: { base: [247, 245, 239], colors: [[226, 128, 96], [140, 118, 226], [96, 146, 226]], blend: 'source-over', power: 0.22 },
 };
 const aur = {
-  on: false, raf: 0, last: 0, t0: performance.now(), pulses: [], trail: 0,
+  on: false, raf: 0, last: 0, t0: performance.now(), pulses: [], hold: null, trail: 0, pc: 0,
   mouse: { x: 0.5, y: 0.5, tx: 0.5, ty: 0.5, near: 0, tnear: 0 },
-  blobs: [
-    { c: 0, x: 0.12, y: 0.1, r: 0.42, ax: 0.08, ay: 0.06, s: 0.06, p: 0 },
-    { c: 1, x: 0.92, y: 0.2, r: 0.38, ax: 0.06, ay: 0.1, s: 0.05, p: 2 },
-    { c: 2, x: 0.6, y: 0.95, r: 0.45, ax: 0.1, ay: 0.05, s: 0.05, p: 4 },
-    { c: 0, x: 0.9, y: 0.9, r: 0.3, ax: 0.05, ay: 0.06, s: 0.08, p: 1, follow: true },
+  // Brillos de borde: centrados fuera del panel, para que solo asome su halo
+  edges: [
+    { c: 0, x: 0.18, y: 1.14, r: 0.36, ax: 0.07, s: 0.05, p: 0, a: 1 },
+    { c: 1, x: 0.52, y: 1.16, r: 0.4, ax: 0.09, s: 0.04, p: 2, a: 0.9 },
+    { c: 2, x: 0.86, y: 1.14, r: 0.36, ax: 0.07, s: 0.06, p: 4, a: 1 },
+    { c: 2, x: -0.12, y: 0.72, r: 0.24, ay: 0.06, s: 0.05, p: 1, a: 0.45 },
+    { c: 1, x: 1.12, y: 0.62, r: 0.24, ay: 0.06, s: 0.04, p: 3, a: 0.45 },
   ],
 };
 const ease = (p) => 1 - Math.pow(1 - p, 3);
@@ -1389,32 +1409,43 @@ function drawAurora(now) {
   const alpha = +getComputedStyle(document.documentElement).getPropertyValue('--alpha') || 0.55;
   const t = (now - aur.t0) / 1000;
   const m = aur.mouse;
-  m.x += (m.tx - m.x) * 0.06;
-  m.y += (m.ty - m.y) * 0.06;
-  m.near += (m.tnear - m.near) * 0.05;
+  m.x += (m.tx - m.x) * 0.08;
+  m.y += (m.ty - m.y) * 0.08;
+  m.near += (m.tnear - m.near) * 0.06;
   ctx.globalCompositeOperation = 'source-over';
   ctx.clearRect(0, 0, W, H);
-  ctx.fillStyle = `rgba(${P.base.join(',')},${0.55 + alpha * 0.45})`;
+  ctx.fillStyle = `rgba(${P.base.join(',')},${0.6 + alpha * 0.4})`;
   ctx.fillRect(0, 0, W, H);
   ctx.globalCompositeOperation = P.blend;
+  const M = Math.max(W, H);
   const blob = (x, y, r, col, a) => {
-    const g = ctx.createRadialGradient(x * W, y * H, 0, x * W, y * H, r * Math.max(W, H));
+    if (a <= 0.003) return;
+    const g = ctx.createRadialGradient(x * W, y * H, 0, x * W, y * H, r * M);
     g.addColorStop(0, `rgba(${col.join(',')},${a})`);
     g.addColorStop(1, `rgba(${col.join(',')},0)`);
     ctx.fillStyle = g;
     ctx.fillRect(0, 0, W, H);
   };
-  for (const b of aur.blobs) {
-    let x = b.x + Math.sin(t * b.s + b.p) * b.ax;
-    let y = b.y + Math.cos(t * b.s * 1.3 + b.p) * b.ay;
-    if (b.follow) (x += (m.x - x) * 0.75 * m.near), (y += (m.y - y) * 0.75 * m.near);
-    const r = b.r * (1 + 0.06 * Math.sin(t * 0.4 + b.p)) * (b.follow ? 0.7 + 0.5 * m.near : 1);
-    blob(x, y, r, P.colors[b.c], P.power * (b.follow ? 0.4 + 0.6 * m.near : 1));
+  // Bordes: respiran despacio; el de abajo se aviva cerca del cursor
+  const bottomBoost = m.near * Math.max(0, (m.y - 0.55) / 0.45);
+  for (const e of aur.edges) {
+    const x = e.x + Math.sin(t * e.s + e.p) * (e.ax || 0);
+    const y = e.y + Math.cos(t * e.s * 1.3 + e.p) * (e.ay || 0.015);
+    const breathe = 0.85 + 0.15 * Math.sin(t * 0.5 + e.p);
+    const boost = e.y > 1 ? 1 + 0.9 * bottomBoost * Math.max(0, 1 - Math.abs(m.x - x) * 2.2) : 1;
+    blob(x, y, e.r * breathe, P.colors[e.c], P.power * e.a * boost);
+  }
+  // Mantener pulsado: brota en el punto y crece mientras sigues pulsando
+  if (aur.hold) {
+    const k = Math.min(1, (now - aur.hold.t0) / 1600);
+    aur.hold.r = 0.03 + 0.3 * ease(k);
+    aur.hold.a = 0.25 + 0.9 * ease(k);
+    blob(aur.hold.x, aur.hold.y, aur.hold.r, P.colors[aur.hold.c], P.power * aur.hold.a);
   }
   aur.pulses = aur.pulses.filter((p) => now - p.t0 < p.life);
   for (const p of aur.pulses) {
     const k = (now - p.t0) / p.life;
-    blob(p.x, p.y, p.r0 + p.r1 * ease(k), P.colors[p.c], P.power * 1.8 * p.a * Math.pow(1 - k, 2));
+    blob(p.x, p.y, p.r + p.grow * ease(k), P.colors[p.c], P.power * p.a * Math.pow(1 - k, 2));
   }
 }
 function setAurora(on) {
@@ -1432,19 +1463,21 @@ window.addEventListener('pointermove', (e) => {
   if (!aur.on) return;
   const p = toLocal(e);
   Object.assign(aur.mouse, { tx: p.x, ty: p.y, tnear: 1 });
-  if (e.buttons && performance.now() - aur.trail > 110) { // al arrastrar deja estela
-    aur.trail = performance.now();
-    aur.pulses.push({ ...p, t0: aur.trail, life: 900, r0: 0.04, r1: 0.18, c: 1, a: 0.6 });
-  }
+  if (aur.hold) Object.assign(aur.hold, { x: aur.hold.x + (p.x - aur.hold.x) * 0.5, y: aur.hold.y + (p.y - aur.hold.y) * 0.5 }); // el brillo acompaña al arrastrar
 }, { passive: true });
 document.addEventListener('pointerleave', () => (aur.mouse.tnear = 0));
-window.addEventListener('blur', () => (aur.mouse.tnear = 0));
-let pulseC = 0;
+window.addEventListener('blur', () => ((aur.mouse.tnear = 0), releaseHold()));
 window.addEventListener('pointerdown', (e) => {
   if (!aur.on) return;
-  const p = toLocal(e);
-  aur.pulses.push({ ...p, t0: performance.now(), life: 1500, r0: 0.05, r1: e.button === 2 ? 0.35 : 0.5, c: pulseC++ % 3, a: 1 });
+  aur.hold = { ...toLocal(e), t0: performance.now(), c: aur.pc++ % 3, r: 0.03, a: 0.25 };
 }, { passive: true });
+function releaseHold() {
+  const h = aur.hold;
+  if (!h) return;
+  aur.hold = null;
+  aur.pulses.push({ x: h.x, y: h.y, r: h.r, grow: 0.06, a: h.a, c: h.c, t0: performance.now(), life: 700 }); // se apaga suave al soltar
+}
+['pointerup', 'pointercancel'].forEach((ev) => window.addEventListener(ev, releaseHold, { passive: true }));
 
 api.onGlass((g) => {
   glass = { ...glass, ...g };
@@ -1490,7 +1523,7 @@ window.addEventListener('pointerdown', (e) => {
   const cs = getComputedStyle(el);
   const clip = document.createElement('div');
   clip.className = 'ripple-clip';
-  Object.assign(clip.style, { left: r.left + 'px', top: r.top + 'px', width: r.width + 'px', height: r.height + 'px', borderRadius: cs.borderRadius, color: el.matches('.bar, .btn.primary, .agent') ? '#fff' : 'var(--accent)' });
+  Object.assign(clip.style, { left: r.left + 'px', top: r.top + 'px', width: r.width + 'px', height: r.height + 'px', borderRadius: cs.borderRadius, clipPath: `inset(0 round ${cs.borderRadius})`, color: el.matches('.bar, .btn.primary, .agent') ? '#fff' : 'var(--accent)' });
   const d = Math.hypot(r.width, r.height) * 2;
   const dot = document.createElement('i');
   Object.assign(dot.style, { width: d + 'px', height: d + 'px', left: e.clientX - r.left - d / 2 + 'px', top: e.clientY - r.top - d / 2 + 'px' });
