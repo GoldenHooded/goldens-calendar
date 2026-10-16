@@ -1,6 +1,6 @@
 {
-  "name": "Temario",
-  "short_name": "Temario",
+  "name": "Golden's Calendar",
+  "short_name": "Golden's",
   "description": "Tu calendario de estudio: exámenes, objetivos y bloques.",
   "start_url": "./",
   "scope": "./",

@@ -421,7 +421,7 @@ textarea.input { height: auto; padding: 8px 10px; resize: none; }
 #widget:hover .grip { opacity: 0.7; }
 
 /* Toast y partículas */
-#toast-root { position: absolute; top: 14px; left: 50%; transform: translateX(-50%); z-index: 60; display: flex; flex-direction: column; gap: 6px; align-items: center; pointer-events: none; }
+#toast-root { position: absolute; z-index: 95 !important; top: 14px; left: 50%; transform: translateX(-50%); z-index: 60; display: flex; flex-direction: column; gap: 6px; align-items: center; pointer-events: none; }
 .toast { background: var(--text); color: var(--panel); padding: 7px 14px; border-radius: 12px; font-size: 12.5px; font-weight: 500; display: flex; gap: 8px; align-items: center; box-shadow: var(--shadow-lg); animation: toastIn 0.6s var(--spring) both; }
 .toast.out { animation: toastOut 0.25s ease-in both; }
 @keyframes toastIn { from { opacity: 0; transform: translateY(-20px) scale(0.85); } }
@@ -461,6 +461,15 @@ body.web .bar { font-size: 10px; padding: 0 4px; border-radius: 5px; }
 body.web .how-body { padding: 20px 18px; }
 @media (max-width: 720px) { .how-cols { gap: 8px; } }
 body.web .card { z-index: 55; }
+/* En el móvil, textos de campos a 16 px: si no, el iPhone hace zoom al tocarlos y la vista se queda ampliada */
+body.web .input, body.web .inline-add, body.web input, body.web textarea, body.web select { font-size: 16px; }
+body.web #toast-root { top: calc(14px + env(safe-area-inset-top)); }
+.cloud-msg { font-size: 12.5px; line-height: 1.45; margin-top: 8px; min-height: 0; transition: color 0.2s; }
+.cloud-msg:empty { display: none; }
+.cloud-msg.err { color: var(--late); background: color-mix(in srgb, var(--late) 12%, transparent); padding: 8px 10px; border-radius: 10px; animation: shake 0.4s var(--out); }
+.cloud-msg.ok { color: var(--ok); }
+@keyframes shake { 20% { transform: translateX(-4px); } 40% { transform: translateX(4px); } 60% { transform: translateX(-2px); } 80% { transform: translateX(2px); } }
+.btn[disabled] { opacity: 0.6; pointer-events: none; }
 #login { position: absolute; inset: 0; z-index: 70; display: grid; place-items: center; padding: 20px; background: color-mix(in srgb, var(--bg-web, #faf9f5) 88%, transparent); backdrop-filter: blur(8px); }
 .login-card { width: min(380px, 100%); background: var(--card); border: 1px solid var(--line); border-radius: 22px; box-shadow: var(--shadow-lg); padding: 24px 22px; animation: popIn 0.5s var(--spring) both; }
 

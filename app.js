@@ -1,4 +1,4 @@
-/* Temario — widget de escritorio. Vanilla JS: render por regiones, morphs con WAAPI, delegación de eventos. */
+/* Golden's Calendar — widget de escritorio. Vanilla JS: render por regiones, morphs con WAAPI, delegación de eventos. */
 const api = window.temario;
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -711,7 +711,7 @@ function howSettings() {
             <small class="sub">${{ tray: 'Escondido en un icono junto al reloj: púlsalo para desplegarlo y se esconde solo al dejar de usarlo.', desk: 'Detrás de tus apps, como parte del escritorio: se ve al mostrar el escritorio (Win+D).', top: 'Se queda encima de todas las ventanas.', win: 'Se comporta como una ventana más.' }[mode]}</small></div>
           <label class="toggle"><div>Ajustar a la cuadrícula de iconos<small>Al moverlo o redimensionarlo, encaja con las celdas del escritorio</small></div><input type="checkbox" data-setting="snap" ${s.snap !== false ? 'checked' : ''}><span class="switch"></span></label>
           <label class="toggle"><div>Iniciar con Windows<small>Con el «¿Cómo vas?» de cada mañana</small></div><input type="checkbox" data-setting="autostart" ${s.autostart ? 'checked' : ''}><span class="switch"></span></label>`, 'desk-only')}
-        ${sec('sec-study', 'redo', 'Estudio', 'Qué hace Temario con lo que se queda sin hacer.', `
+        ${sec('sec-study', 'redo', 'Estudio', 'Qué hace la app con lo que se queda sin hacer.', `
           <label class="toggle"><div>Arrastrar lo pendiente<small>Cada mañana, lo no hecho pasa al siguiente bloque</small></div><input type="checkbox" data-setting="autoRollover" ${s.autoRollover ? 'checked' : ''}><span class="switch"></span></label>`, 'desk-only')}
       </div>
       <div>
@@ -765,7 +765,8 @@ function cloudForm() {
   return `<div class="c-meta" style="margin:2px 0 8px">Entra para tener tu calendario en el móvil y en otros PCs.</div>
     <input class="input" data-cloud-email type="email" autocomplete="email" placeholder="tu@email.com" value="${esc(ui.cloudEmail || '')}">
     <input class="input" data-cloud-pw type="password" autocomplete="current-password" placeholder="Contraseña" style="margin-top:6px">
-    <div class="c-actions"><button class="btn primary" data-act="cloud-signin">Entrar</button><button class="btn plain" data-act="cloud-signup">Crear cuenta</button></div>`;
+    <div class="cloud-msg ${ui.cloudMsg?.kind || ''}" data-key="cloud-msg">${ui.cloudMsg ? esc(ui.cloudMsg.text) : ''}</div>
+    <div class="c-actions"><button class="btn primary" data-act="cloud-signin" ${ui.cloudBusy ? 'disabled' : ''}>${ui.cloudBusy === 'in' ? 'Entrando…' : 'Entrar'}</button><button class="btn plain" data-act="cloud-signup" ${ui.cloudBusy ? 'disabled' : ''}>${ui.cloudBusy === 'up' ? 'Creando…' : 'Crear cuenta'}</button></div>`;
 }
 function cloudSection() {
   const c = S.cloud || { state: 'unconfigured' };
@@ -794,7 +795,7 @@ function renderLogin() {
     $('#widget').appendChild(el);
   }
   if (el.querySelector('input') && document.activeElement?.closest('#login')) return;
-  el.innerHTML = `<div class="login-card"><div class="greet">Temario</div><div class="sub" style="margin-bottom:14px">Tu calendario de estudio, también en el móvil.</div>${cloudForm()}</div>`;
+  el.innerHTML = `<div class="login-card"><div class="greet">Golden&#39;s Calendar</div><div class="sub" style="margin-bottom:14px">Tu calendario de estudio, también en el móvil.</div>${cloudForm()}</div>`;
 }
 function sizeHow() {
   const w = $('#widget');
@@ -1078,19 +1079,37 @@ const actions = {
   'install-skill': async () => { const p = await api.installSkill(); toast(`${icon('check', 14)} Skill instalada en ${esc(p)}`, 4000); },
   'agent-send': () => sendAgent(),
 };
+// Muestra el estado del inicio de sesión dentro de la propia tarjeta (no en un aviso que quede tapado)
+function cloudStatus(msg, busy = null) {
+  ui.cloudMsg = msg;
+  ui.cloudBusy = busy;
+  for (const box of $$('.cloud-msg')) {
+    box.className = 'cloud-msg ' + (msg?.kind || '');
+    box.textContent = msg?.text || '';
+  }
+  for (const b of $$('[data-act="cloud-signin"], [data-act="cloud-signup"]')) {
+    b.disabled = !!busy;
+    b.textContent = b.dataset.act === 'cloud-signin' ? (busy === 'in' ? 'Entrando…' : 'Entrar') : busy === 'up' ? 'Creando…' : 'Crear cuenta';
+  }
+}
 async function cloudAuth(kind) {
-  const email = $('[data-cloud-email]')?.value.trim();
-  const pw = $('[data-cloud-pw]')?.value || '';
-  if (!/^\S+@\S+\.\S+$/.test(email || '')) return toast('Escribe un email válido');
-  if (pw.length < 6) return toast('La contraseña debe tener al menos 6 caracteres');
+  // Los campos de la tarjeta que se está usando (la de entrada en el móvil o la de Ajustes)
+  const scope = document.activeElement?.closest?.('#login, .how-body') || $('#login') || $('.how-body') || document;
+  const email = (scope.querySelector('[data-cloud-email]')?.value || '').trim().toLowerCase();
+  const pw = scope.querySelector('[data-cloud-pw]')?.value || '';
+  if (!/^\S+@\S+\.\S+$/.test(email)) return cloudStatus({ kind: 'err', text: 'Escribe un email válido.' });
+  if (pw.length < 6) return cloudStatus({ kind: 'err', text: 'La contraseña debe tener al menos 6 caracteres.' });
   ui.cloudEmail = email;
+  cloudStatus(null, kind);
   try {
     await (kind === 'up' ? api.cloudSignUp(email, pw) : api.cloudSignIn(email, pw));
+    cloudStatus({ kind: 'ok', text: kind === 'up' ? 'Cuenta creada. Sincronizando…' : 'Dentro. Sincronizando…' });
     toast(`${icon('check', 14)} ${kind === 'up' ? 'Cuenta creada' : 'Conectado'}: sincronizando`);
     await refresh();
     renderHow(true);
+    setTimeout(() => cloudStatus(null), 1500);
   } catch (e) {
-    toast(esc(cleanErr(e)), 4000);
+    cloudStatus({ kind: 'err', text: cleanErr(e) || 'No se pudo conectar. Revisa la conexión e inténtalo otra vez.' });
   }
 }
 const cleanErr = (e) => String(e?.message || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
