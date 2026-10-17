@@ -239,6 +239,7 @@ function renderHead() {
       <button class="ibtn" data-act="month" data-d="1" title="Mes siguiente">${icon('chevR', 16)}</button>
       ${(ui.view === 'week' ? ui.weekStart !== mondayOf(S.today) : ui.month !== S.today.slice(0, 8) + '01') ? `<button class="ibtn" data-act="today" title="Volver a hoy">${icon('cal', 15)}</button>` : ''}
       <button class="ibtn view-btn" data-act="toggle-view" title="${ui.view === 'week' ? 'Ver el mes (W)' : 'Ver la semana (W)'}">${icon(ui.view === 'week' ? 'gridMonth' : 'columns', 15)}</button>
+      ${S.web ? `<button class="ibtn add-btn" data-act="add-menu" title="Añadir" aria-label="Añadir">${icon('plus', 22)}</button>` : ''}
     </div>
     ${S.web ? '' : `${layerWheel()}
     <kbd class="esc-hint" title="Escape cierra">esc</kbd>
@@ -2418,6 +2419,20 @@ function popCheck(el, done) {
     burst(r.left + r.width / 2, r.top + r.height / 2, getComputedStyle(el).getPropertyValue('--c').trim() || '#d97757');
   }
 }
+// Menú de añadir anclado a un botón; date es el día en el que se crea
+function addMenu(el, date) {
+  if (!date) return;
+  const r = el.getBoundingClientRect();
+  const swap = (type) => () => actions.swap({ dataset: { type, date } });
+  openCtx(r.right, r.bottom + 4, [
+    { label: 'Bloque', icon: 'layers', run: swap('new-block') },
+    { label: 'Objetivo', icon: 'target', run: swap('new-goal') },
+    { label: 'Examen o entrega', icon: 'cap', run: swap('new-ms') },
+    { label: 'Recordatorio', icon: 'checklist', run: () => actions['day-todo']({ dataset: { date } }) },
+    '-',
+    { label: 'Proyecto o asignatura', icon: 'folder', run: swap('new-project') },
+  ]);
+}
 const actions = {
   month: (el) => changeMonth(+el.dataset.d),
   today: () => {
@@ -2459,17 +2474,12 @@ const actions = {
   'day-step': (el) => stepDay(+el.dataset.d),
   'day-jump': (el) => ui.card?.type === 'day' && stepDay(diffDays(ui.card.date, el.dataset.date), el.dataset.date),
   // «+» de la vista del día: menú con lo que se puede añadir ese día
-  'day-add': (el) => {
-    const date = ui.card?.date;
-    if (!date) return;
-    const r = el.getBoundingClientRect();
-    const swap = (type) => () => actions.swap({ dataset: { type, date } });
-    openCtx(r.right, r.bottom + 4, [
-      { label: 'Bloque', icon: 'layers', run: swap('new-block') },
-      { label: 'Objetivo', icon: 'target', run: swap('new-goal') },
-      { label: 'Examen o entrega', icon: 'cap', run: swap('new-ms') },
-      { label: 'Recordatorio', icon: 'checklist', run: () => actions['day-todo']({ dataset: { date } }) },
-    ]);
+  // «+» de la vista del día y de la cabecera del móvil: menú con lo que se puede añadir
+  'day-add': (el) => addMenu(el, ui.card?.date),
+  'add-menu': (el) => {
+    const { from, to } = gridRange();
+    const vis = ui.view === 'week' ? { from: ui.weekStart, to: addDays(ui.weekStart, 6) } : { from: ui.month, to: addDays(addMonths(ui.month, 1), -1) };
+    addMenu(el, S.today >= vis.from && S.today <= vis.to ? S.today : vis.from || from || to);
   },
   'day-todo': (el) => {
     const date = el.dataset.date;

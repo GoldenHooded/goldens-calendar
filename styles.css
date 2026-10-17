@@ -665,6 +665,11 @@ body.web {
   -webkit-tap-highlight-color: transparent; -webkit-touch-callout: none; touch-action: manipulation; overscroll-behavior: none;
 }
 body.web ::-webkit-scrollbar { width: 0; height: 0; }
+/* Mantener pulsado abre el menú: que iOS no seleccione texto ni lo subraye (los campos sí se pueden seleccionar) */
+body.web { -webkit-user-select: none; user-select: none; }
+body.web input, body.web textarea, body.web [contenteditable='true'] { -webkit-user-select: text; user-select: text; }
+body.web .add-btn { color: var(--accent); }
+body.web .add-btn .ic { width: 24px; height: 24px; }
 body.web #widget { inset: 0; border-radius: 0; border: 0; box-shadow: none; background: #000; animation: fadeOnly 0.3s ease both; }
 body.web #glass, body.web #aurora, body.web .grip, body.web #agent, body.web #reply, body.web .desk-only { display: none !important; }
 
