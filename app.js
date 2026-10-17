@@ -40,6 +40,8 @@ const ui = {
   closed: new Set(JSON.parse(localStorage.getItem('closed') || '[]')),
   holdUntil: 0,
   layer: localStorage.getItem('layer') || 'all',
+  view: localStorage.getItem('view') === 'week' ? 'week' : 'month', // mes o semana
+  weekStart: null,
   layerMenu: false,
 };
 // Capas: qué se ve en el calendario
@@ -47,6 +49,7 @@ const activeLayer = () => (ui.layer !== 'all' && S ? byId(S.db.layers || [], ui.
 function inLayer(kind, x) {
   const l = activeLayer();
   if (!l) return true;
+  if (x.blocking || (kind === 'ext' && byId(S.db.subscriptions || [], x.subId)?.blocking)) return true; // el tiempo bloqueado se ve en todas las capas
   if (kind === 'ext') return l.subscriptionIds.includes(x.subId);
   if (kind === 'goal' && !x.projectId) return !!l.includeLoose;
   // Proyecto entero, o solo alguna de sus subcategorías
@@ -68,6 +71,7 @@ const ink = (hex) => {
 };
 
 function gridRange() {
+  if (ui.view === 'week' && ui.weekStart) return { from: ui.weekStart, to: addDays(ui.weekStart, 6) };
   const first = parse(ui.month);
   const from = addDays(ui.month, -((first.getDay() + 6) % 7));
   return { from, to: addDays(from, 41) };
@@ -99,6 +103,7 @@ function animateValues(root = document) {
   }));
 }
 function burst(x, y, color) {
+  if (S?.web) return; // en el móvil, sin confeti: basta con el check (animaciones más sobrias)
   for (let i = 0; i < 12; i++) {
     const p = document.createElement('i');
     Object.assign(p.style, { left: x + 'px', top: y + 'px', background: i % 3 ? color : '#f2c46d' });
@@ -119,7 +124,11 @@ async function run(name, input) {
   try {
     return await api.run(name, input);
   } catch (e) {
-    toast(esc(String(e.message).replace(/^Error invoking remote method '[^']+': (Error: )?/, '')));
+    const msg = String(e.message).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
+    if (/hueco est\u00e1 bloqueado/.test(msg)) {
+      ui.retry = { name, input };
+      toast(`${icon('clock', 14)} ${esc(msg.replace(/ Si quieres.*$/, ''))} <button class="lnk" data-act="force-last">Ponerlo igualmente</button>`, 7000);
+    } else toast(esc(msg));
     throw e;
   }
 }
@@ -215,11 +224,12 @@ function render() {
 function renderHead() {
   const m = parse(ui.month);
   morph($('#head'), `
-    <div class="month"><span class="n" id="mname">${MONTHS[m.getMonth()]}</span><span class="y">${m.getFullYear()}</span></div>
+    <div class="month"><span class="n" id="mname">${MONTHS[(ui.view === 'week' && ui.weekStart ? parse(ui.weekStart) : m).getMonth()]}</span><span class="y">${ui.view === 'week' && ui.weekStart ? `${parse(ui.weekStart).getDate()}–${parse(addDays(ui.weekStart, 6)).getDate()}` : m.getFullYear()}</span></div>
     <div class="nav">
       <button class="ibtn" data-act="month" data-d="-1" title="Mes anterior">${icon('chevL', 16)}</button>
       <button class="ibtn" data-act="month" data-d="1" title="Mes siguiente">${icon('chevR', 16)}</button>
-      ${ui.month !== S.today.slice(0, 8) + '01' ? `<button class="ibtn" data-act="today" title="Volver a hoy">${icon('cal', 15)}</button>` : ''}
+      ${(ui.view === 'week' ? ui.weekStart !== mondayOf(S.today) : ui.month !== S.today.slice(0, 8) + '01') ? `<button class="ibtn" data-act="today" title="Volver a hoy">${icon('cal', 15)}</button>` : ''}
+      <button class="ibtn view-btn" data-act="toggle-view" title="${ui.view === 'week' ? 'Ver el mes (W)' : 'Ver la semana (W)'}">${icon(ui.view === 'week' ? 'gridMonth' : 'columns', 15)}</button>
     </div>
     ${S.web ? '' : `${layerWheel()}
     <button class="ibtn rm-go" data-act="rm-go" title="Recordatorios (R)">${icon('checklist', 15)}${rmCount().today ? `<span class="badge">${rmCount().today}</span>` : ''}</button>
@@ -227,7 +237,7 @@ function renderHead() {
   $('#weekdays').innerHTML = ['L', 'M', 'X', 'J', 'V', 'S', 'D'].map((d) => `<div>${d}</div>`).join('');
   if (S.web) renderDock();
 }
-// Móvil: capa y recordatorios abajo, a los lados de «¿Cómo vas?», al alcance del pulgar
+// Móvil: capa, «¿Cómo vas?», Claude y recordatorios abajo, al alcance del pulgar
 function renderDock() {
   let el = $('#dock');
   if (!el) {
@@ -238,6 +248,7 @@ function renderDock() {
   const n = rmCount().today;
   morph(el, `<button class="layer-pill dock-btn dock-layer ${activeLayer() ? 'on' : ''}" data-act="layer-menu" data-key="dock-layer" title="Capas">${icon('layers', 20)}<span>${esc(activeLayer()?.name || 'Todo')}</span></button>
     <button class="dock-btn dock-how ${ui.fresh ? 'fresh' : ''}" data-act="how-open" data-key="dock-how">${ui.fresh ? '<span class="dot"></span>' : icon('sun', 20)}<span>¿Cómo vas?</span></button>
+    <button class="dock-btn dock-ai" data-act="ai-open" data-key="dock-ai" title="Hablar con Claude" aria-label="Hablar con Claude">${icon('spark', 22)}</button>
     <button class="dock-btn dock-rm" data-act="rm-go" data-key="dock-rm" title="Recordatorios" aria-label="Recordatorios">${icon('checklist', 22)}${n ? `<span class="badge">${n}</span>` : ''}</button>
     ${ui.layerMenu ? layerMenu() : ''}`);
 }
@@ -341,6 +352,131 @@ function weekItems(ws) {
 }
 
 function renderCal(dir = 0, slide = true) {
+  const week = ui.view === 'week';
+  if (week && !ui.weekStart) ui.weekStart = mondayOf(S.today);
+  document.body.classList.toggle('view-week', week);
+  const weeks = $('#weeks');
+  if (weeks.classList.contains('wkview') !== week) (weeks.innerHTML = ''), weeks.classList.toggle('wkview', week);
+  const html = week ? weekViewHTML() : weeksHTML();
+  if (dir) weeks.innerHTML = html; // cambio de mes: entra entero deslizando
+  else morph(weeks, html);
+  if ((dir && slide) || !weeks.dataset.ready) {
+    // las barras solo entran animadas al abrir o al cambiar de mes, no en cada actualización
+    weeks.dataset.ready = '1';
+    weeks.classList.add('anim');
+    clearTimeout(renderCal.t);
+    renderCal.t = setTimeout(() => weeks.classList.remove('anim'), 1200);
+  }
+  weeks.classList.remove('l', 'r');
+  if (dir && slide) {
+    void weeks.offsetWidth;
+    weeks.classList.add(dir < 0 ? 'l' : 'r');
+  }
+}
+// ---------- Vista semanal: los días grandes con su time blocking ----------
+const WD_SHORT = ['LUN', 'MAR', 'MIÉ', 'JUE', 'VIE', 'SÁB', 'DOM'];
+const minsOf = (h) => (h ? +h.slice(0, 2) * 60 + +h.slice(3, 5) : null);
+const hhmmOf = (m) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+const mondayOf = (d) => addDays(d, -((parse(d).getDay() + 6) % 7));
+const subBlocking = (id) => !!byId(S.db.subscriptions || [], id)?.blocking;
+// Días con un bloqueo de día entero (rayados en el mes)
+function allDayBlocked(d) {
+  return S.db.blocks.some((b) => b.blocking && !b.start && b.date <= d && blockEnd(b) >= d) || (S.db.extEvents || []).some((e) => !e.start && subBlocking(e.subId) && e.date <= d && (e.endDate || e.date) >= d);
+}
+function weekViewHTML() {
+  const ws = ui.weekStart;
+  const days = [...Array(7)].map((_, i) => addDays(ws, i));
+  const timed = Object.fromEntries(days.map((d) => [d, []]));
+  const allday = Object.fromEntries(days.map((d) => [d, []]));
+  const put = (d, it) => (it.from == null ? allday[d] : timed[d])?.push(it);
+  for (const b of S.db.blocks) {
+    if (!(b.blocking || inLayer('blk', b))) continue;
+    const st = S.stats.blocks[b.id];
+    for (const d of days) if (b.date <= d && blockEnd(b) >= d) put(d, { type: 'block', id: b.id, title: b.title, color: proj(b.projectId).color, from: minsOf(b.start), to: b.end ? minsOf(b.end) : minsOf(b.start) + 60, blocking: b.blocking, done: st?.pct === 100 });
+  }
+  for (const e of S.db.extEvents || []) {
+    const blocking = subBlocking(e.subId);
+    if (!(blocking || inLayer('ext', e))) continue;
+    for (const d of days) if (e.date <= d && (e.endDate || e.date) >= d) put(d, { type: 'ext', id: e.id, title: e.title.trim(), color: subColor(e.subId), from: minsOf(e.start), to: e.end ? minsOf(e.end) : minsOf(e.start) + 60, blocking });
+  }
+  for (const m of S.db.milestones) if (timed[m.date] && inLayer('ms', m)) put(m.date, { type: 'ms', id: m.id, title: m.title, color: proj(m.projectId).color, from: minsOf(m.time), to: minsOf(m.time) + 60, icon: KIND_ICON[m.kind] });
+  for (const g of S.db.goals || []) if (timed[g.date] && inLayer('goal', g)) put(g.date, { type: 'goal', id: g.id, title: g.title, color: goalColor(g), from: minsOf(g.time), to: minsOf(g.time) + 30, icon: 'target', done: g.done });
+  for (const t of rmAll()) if (timed[t.due] && !t.done) put(t.due, { type: 'todo', id: t.id, title: t.title, color: rmColor(t), from: minsOf(t.time), to: minsOf(t.time) + 30, icon: 'checklist' });
+  // Horas visibles: de 8 a 21, ampliando si hay algo antes o después
+  let h0 = 8 * 60, h1 = 21 * 60;
+  for (const d of days) for (const it of timed[d]) (h0 = Math.min(h0, Math.floor(it.from / 60) * 60)), (h1 = Math.max(h1, Math.ceil(Math.min(1440, it.to) / 60) * 60));
+  const adRows = Math.min(3, Math.max(0, ...days.map((d) => allday[d].length)));
+  const H = $('#weeks').clientHeight || 520;
+  const avail = H - 40 - (adRows ? adRows * 21 + 8 : 0);
+  const ppm = Math.max(0.62, avail / (h1 - h0));
+  const now = new Date(), nowM = now.getHours() * 60 + now.getMinutes();
+  const itemHTML = (d, it, left, width) => {
+    const top = (it.from - h0) * ppm, h = Math.max(16, (Math.min(it.to, h1) - it.from) * ppm - 2);
+    const act = it.type === 'todo' ? 'data-act="rm-goto"' : `data-act="open" data-type="${it.type}"`;
+    return `<div class="wk-it ${it.type} ${it.blocking ? 'blocking' : ''} ${it.done ? 'done' : ''} ${h < 30 ? 'thin' : ''}" ${act} data-id="${esc(it.id)}" data-key="wi-${esc(it.id)}-${d}" style="top:${top}px;height:${h}px;left:${left}%;width:${width}%;--c:${it.color};--ink:${ink(it.color)}" title="${esc(it.title)} · ${hhmmOf(it.from)}–${hhmmOf(it.to)}">
+      <b>${hhmmOf(it.from)}</b><span>${it.icon ? icon(it.icon, 10) : ''}${esc(it.title)}</span></div>`;
+  };
+  const cols = days.map((d) => {
+    // Carriles para lo que se solapa
+    const list = timed[d].sort((a, b) => a.from - b.from || b.to - a.to);
+    let html = '', group = [], end = -1;
+    const flush = () => {
+      const lanes = [];
+      for (const it of group) {
+        let l = lanes.findIndex((t) => t <= it.from);
+        if (l < 0) (l = lanes.length), lanes.push(0);
+        lanes[l] = it.to;
+        it.lane = l;
+      }
+      for (const it of group) html += itemHTML(d, it, (it.lane / lanes.length) * 100, 100 / lanes.length);
+      group = [];
+    };
+    for (const it of list) {
+      if (it.from >= end && group.length) flush();
+      group.push(it);
+      end = Math.max(end, it.to);
+    }
+    flush();
+    const blockedDay = allDayBlocked(d);
+    return `<div class="wk-col ${d === S.today ? 'today' : ''} ${blockedDay ? 'blocked' : ''}" data-act="wk-slot" data-date="${d}" data-key="wc-${d}">${html}${d === S.today && nowM >= h0 && nowM <= h1 ? `<div class="wk-now" data-key="wk-now" style="top:${(nowM - h0) * ppm}px"></div>` : ''}</div>`;
+  });
+  const hours = [];
+  for (let m = h0; m <= h1; m += 60) hours.push(`<span style="top:${(m - h0) * ppm}px">${m / 60}</span>`);
+  return `<div class="wk" data-key="wk">
+    <div class="wk-row wk-head" data-key="wkh"><div class="wk-gut"></div>${days.map((d, i) => `<button class="wk-dh ${d === S.today ? 'today' : ''} ${parse(d).getDay() % 6 === 0 ? 'we' : ''}" data-act="open-day" data-date="${d}" data-key="wdh-${d}"><span class="wd">${WD_SHORT[i]}</span><span class="dn">${parse(d).getDate()}</span></button>`).join('')}</div>
+    ${adRows ? `<div class="wk-row wk-allday" data-key="wka"><div class="wk-gut"></div>${days.map((d) => `<div class="wk-ad" data-key="wad-${d}">${allday[d].slice(0, 3).map((it) => `<div class="wk-chip ${it.type} ${it.blocking ? 'blocking' : ''} ${it.done ? 'done' : ''}" ${it.type === 'todo' ? 'data-act="rm-goto"' : `data-act="open" data-type="${it.type}"`} data-id="${esc(it.id)}" data-key="wac-${esc(it.id)}-${d}" style="--c:${it.color};--ink:${ink(it.color)}" title="${esc(it.title)}">${it.icon ? icon(it.icon, 10) : ''}${esc(it.title)}</div>`).join('')}${allday[d].length > 3 ? `<span class="wk-more">+${allday[d].length - 3}</span>` : ''}</div>`).join('')}</div>` : ''}
+    <div class="wk-body" data-key="wkb"><div class="wk-grid" data-key="wkg" data-h0="${h0}" data-ppm="${ppm}" style="height:${(h1 - h0) * ppm}px;--ppm:${ppm}">
+      <div class="wk-hours" data-key="wkhr">${hours.join('')}</div>${cols.join('')}</div></div>
+  </div>`;
+}
+function setView(v) {
+  if (ui.view === v) return;
+  ui.view = v;
+  localStorage.setItem('view', v);
+  if (v === 'week') ui.weekStart = mondayOf(S.today.slice(0, 7) === ui.month.slice(0, 7) ? S.today : ui.month);
+  else ui.month = ui.weekStart.slice(0, 8) + '01';
+  document.body.classList.toggle('view-week', v === 'week');
+  goWeekOrMonth(0);
+}
+async function goWeekOrMonth(d) {
+  closeCard(true);
+  const seq = ++goSeq;
+  const st = await api.state(gridRange());
+  if (seq !== goSeq) return;
+  S = st;
+  renderHead();
+  renderCal(d || 1, !!d);
+}
+function changeWeek(d) {
+  ui.weekStart = addDays(ui.weekStart, d * 7);
+  ui.month = ui.weekStart.slice(0, 8) + '01';
+  goWeekOrMonth(d);
+}
+// La raya de «ahora» avanza sola
+setInterval(() => ui.view === 'week' && S && !ui.card && renderCal(), 60000);
+
+// Las semanas del mes de ui.month con los datos de S (el móvil también lo usa para pintar el mes vecino)
+function weeksHTML() {
   const { from } = gridRange();
   const month = parse(ui.month).getMonth();
   const weekH = $('#weeks').clientHeight / 6 || 80;
@@ -359,21 +495,21 @@ function renderCal(dir = 0, slide = true) {
       const key = `${it.kind}-${it.id}-${w}`;
       const style = `left:calc(${(it.s / 7) * 100}% + 3px);width:calc(${((it.e - it.s + 1) / 7) * 100}% - 6px);top:${G.top + it.lane * G.step}px;--c:${p.color};--ink:${ink(p.color)};--i:${n++}`;
       if (it.kind === 'ext') {
-        bars += `<div class="bar ext ${it.cl ? 'cl' : ''} ${it.cr ? 'cr' : ''}" data-act="open" data-type="ext" data-id="${esc(it.id)}" data-key="${esc(key)}" style="${style}" title="${esc(it.x.title)}">${it.x.start && !it.cl && !S.web ? it.x.start + ' ' : ''}${esc(it.x.title)}</div>`;
+        bars += `<div class="bar ext ${subBlocking(it.x.subId) ? 'blocking' : ''} ${it.cl ? 'cl' : ''} ${it.cr ? 'cr' : ''}" data-act="open" data-type="ext" data-id="${esc(it.id)}" data-key="${esc(key)}" style="${style}" title="${esc(it.x.title)}">${it.x.start && !it.cl && !S.web ? it.x.start + ' ' : ''}${esc(it.x.title)}</div>`;
       } else if (it.kind === 'goal') {
         bars += `<div class="bar goal ${it.x.done ? 'done' : ''}" data-act="open" data-type="goal" data-id="${it.id}" data-key="${key}" style="${style}" title="${esc(it.x.title)}">${icon(it.x.done ? 'check' : 'target', 11)}<span>${esc(it.x.title)}</span></div>`;
       } else if (it.kind === 'ms') {
         bars += `<div class="bar ms" data-act="open" data-type="ms" data-id="${it.id}" data-key="${key}" style="${style}" title="${esc(it.x.title)} · ${projLabel(it.x.projectId, it.x.categoryId)}">${icon(KIND_ICON[it.x.kind] || 'flag', 11)}<span>${esc(it.x.title)}</span></div>`;
       } else {
         const st = S.stats.blocks[it.id];
-        bars += `<div class="bar blk ${st.pct === 100 ? 'done' : ''} ${it.cl ? 'cl' : ''} ${it.cr ? 'cr' : ''}" data-block="${it.id}" data-act="open" data-type="block" data-id="${it.id}" data-key="${key}" style="${style}" title="${esc(it.x.title)} · ${projLabel(it.x.projectId, it.x.categoryId)}">${esc(it.x.title)}</div>`;
+        bars += `<div class="bar blk ${it.x.blocking ? 'blocking' : ''} ${st.pct === 100 ? 'done' : ''} ${it.cl ? 'cl' : ''} ${it.cr ? 'cr' : ''}" data-block="${it.id}" data-act="open" data-type="block" data-id="${it.id}" data-key="${key}" style="${style}" title="${esc(it.x.title)} · ${projLabel(it.x.projectId, it.x.categoryId)}">${esc(it.x.title)}</div>`;
       }
     }
     let cells = '';
     for (let c = 0; c < 7; c++) {
       const d = addDays(ws, c);
       const st = S.days[d];
-      cells += `<div class="cell ${parse(d).getMonth() !== month ? 'out' : ''} ${d === S.today ? 'today' : ''}" data-act="open-day" data-date="${d}" data-key="day-${d}" data-drop="${d}" style="left:${(c / 7) * 100}%;width:${100 / 7}%">
+      cells += `<div class="cell ${parse(d).getMonth() !== month ? 'out' : ''} ${d === S.today ? 'today' : ''} ${allDayBlocked(d) ? 'blocked' : ''}" data-act="open-day" data-date="${d}" data-key="day-${d}" data-drop="${d}" style="left:${(c / 7) * 100}%;width:${100 / 7}%">
         <span class="num">${parse(d).getDate()}</span>${['ok', 'late', 'carried'].includes(st) && d < S.today ? `<span class="st ${st}"></span>` : ''}${hidden[c] ? `<span class="more">+${hidden[c]}</span>` : ''}</div>`;
     }
     html += `<div class="week">${cells}${bars}</div>`;
@@ -382,21 +518,7 @@ function renderCal(dir = 0, slide = true) {
     html += `<div class="empty"><div><h2>Tu temario, a la vista</h2><p>Crea una asignatura o proyecto, o pídeselo al agente con el botón de la esquina.</p>
       <div style="display:flex;gap:8px;justify-content:center"><button class="btn primary" data-act="new" data-type="new-project">${icon('plus', 14)} Crear proyecto</button><button class="btn" data-act="demo">Ver ejemplo</button></div></div></div>`;
   }
-  const weeks = $('#weeks');
-  if (dir) weeks.innerHTML = html; // cambio de mes: entra entero deslizando
-  else morph(weeks, html);
-  if ((dir && slide) || !weeks.dataset.ready) {
-    // las barras solo entran animadas al abrir o al cambiar de mes, no en cada actualización
-    weeks.dataset.ready = '1';
-    weeks.classList.add('anim');
-    clearTimeout(renderCal.t);
-    renderCal.t = setTimeout(() => weeks.classList.remove('anim'), 1200);
-  }
-  weeks.classList.remove('l', 'r');
-  if (dir && slide) {
-    void weeks.offsetWidth;
-    weeks.classList.add(dir < 0 ? 'l' : 'r');
-  }
+  return html;
 }
 
 // ---------- tarjeta (morph desde una barra o un día) ----------
@@ -418,7 +540,7 @@ function cardBlock(id) {
   const past = blockEnd(b) < S.today;
   return `
     <div class="c-head"><div class="t"><div class="c-title">${esc(b.title)}</div>
-      <div class="c-meta"><span class="tag" style="--c:${p.color}">${projLabel(b.projectId, b.categoryId)}</span>${b.endDate ? `${fmtShort(b.date)} → ${fmtShort(b.endDate)}` : fmtLong(b.date)}${b.start ? ` · ${b.start}${b.end ? '–' + b.end : ''}` : ''}</div></div>
+      <div class="c-meta"><span class="tag" style="--c:${p.color}">${projLabel(b.projectId, b.categoryId)}</span>${b.blocking ? `<span class="tag blocking-tag">${icon('clock', 11)} Bloqueado</span>` : ''}${b.endDate ? `${fmtShort(b.date)} → ${fmtShort(b.endDate)}` : fmtLong(b.date)}${b.start ? ` · ${b.start}${b.end ? '–' + b.end : ''}` : ''}</div></div>
       <button class="ibtn" data-act="close-card">${icon('x', 15)}</button></div>
     <div class="c-hero" style="--c:${p.color}">${ring('cb-' + id, st.pct, p.color, 48, 5)}
       <div><div style="font-weight:600">${st.carried ? 'Pendientes movidos' : st.manual ? (b.done ? 'Hecho' : 'Sin tareas') : `${st.done} de ${st.total} hechas`}</div>
@@ -573,7 +695,7 @@ function pickTasks(pid, mid, checked, blockId) {
   return html || '<div class="hint" style="padding:6px 8px">Sin tareas pendientes</div>';
 }
 const msOptions = (pid, sel) => `<option value="">— Ninguno —</option>` + S.db.milestones.filter((m) => m.projectId === pid && m.date >= S.today).map((m) => `<option value="${m.id}" ${m.id === sel ? 'selected' : ''}>${esc(m.title)} · ${fmtShort(m.date)}</option>`).join('');
-function formBlock({ id, date, ms }) {
+function formBlock({ id, date, ms, start }) {
   const b = id && byId(S.db.blocks, id);
   const m0 = ms && byId(S.db.milestones, ms);
   const pid = b?.projectId || m0?.projectId || S.db.projects[0]?.id;
@@ -586,8 +708,9 @@ function formBlock({ id, date, ms }) {
     <label class="field"><span>Qué vas a hacer</span><input class="input" name="title" required autofocus value="${esc(b?.title || (m0 ? 'Estudiar · ' + m0.title : ''))}" placeholder="Repasar tema 2…"></label>
     <div class="row2"><label class="field"><span>Desde</span><input class="input" type="date" name="date" required value="${b?.date || date || S.today}"></label>
       <label class="field"><span>Hasta</span><input class="input" type="date" name="endDate" value="${b?.endDate || ''}"></label></div>
-    <div class="row2"><label class="field"><span>Inicio</span><input class="input" type="time" name="start" value="${b?.start || ''}"></label>
-      <label class="field"><span>Fin</span><input class="input" type="time" name="end" value="${b?.end || ''}"></label></div>
+    <div class="row2"><label class="field"><span>Inicio</span><input class="input" type="time" name="start" value="${b?.start || start || ''}"></label>
+      <label class="field"><span>Fin</span><input class="input" type="time" name="end" value="${b?.end || (start ? hhmmOf(Math.min(1439, minsOf(start) + 60)) : '')}"></label></div>
+    <label class="toggle"><div>Tiempo bloqueado<small>Ocupa su hueco en todas las capas: no se podrá poner nada encima</small></div><input type="checkbox" name="blocking" ${b?.blocking ? 'checked' : ''}><span class="switch"></span></label>
     <div class="field"><span>Tareas</span><div class="picklist" data-pick>${pid ? pickTasks(pid, mid, assigned, id) : ''}</div></div>
     ${formFoot(b ? 'Guardar' : 'Crear bloque')}</form>`;
 }
@@ -616,7 +739,7 @@ function cardHTML(v) {
     case 'new-project': return formProject();
     case 'new-ms': return formMilestone({ date: v.date });
     case 'edit-ms': return formMilestone({ id: v.id });
-    case 'new-block': return formBlock({ date: v.date, ms: v.ms });
+    case 'new-block': return formBlock({ date: v.date, ms: v.ms, start: v.start });
     case 'edit-block': return formBlock({ id: v.id });
     case 'plan': return formPlan({ id: v.id });
   }
@@ -644,7 +767,7 @@ function place(a, w, h) {
 const px = (r) => ({ left: r.left + 'px', top: r.top + 'px', width: r.width + 'px', height: r.height + 'px' });
 
 function openCard(v, anchorEl) {
-  if (S.web) return openSheet(v, anchorEl);
+  if (S.web) return navTo({ k: 'card', v: pageOf(v) }); // en el móvil, una pantalla nueva del historial
   const card = $('#card');
   const a = relRect(anchorEl);
   const html = cardHTML(v);
@@ -675,10 +798,10 @@ function fixCardSize(r) {
 function afterCard() {
   const card = $('#card');
   animateValues(card);
-  setTimeout(() => $('[autofocus]', card)?.focus(), S.web ? 520 : 250); // en el móvil, cuando la hoja ya ha llegado (el teclado no la empuja a medias)
+  setTimeout(() => $('[autofocus]', card)?.focus(), S.web ? 450 : 250); // en el móvil, cuando la pantalla ya ha entrado (el teclado no la empuja a medias)
 }
 function swapCard(v) {
-  if (S.web) return swapSheet(v);
+  if (S.web) return navTo({ k: 'card', v: pageOf(v) }, { replace: true }); // formulario → resultado: misma entrada
   const card = $('#card');
   const html = cardHTML(v);
   if (!html) return closeCard();
@@ -708,7 +831,7 @@ function updateCard() {
   inner.classList.remove('fade');
   inner.scrollTop = scroll;
   if (focus) $(`[data-key="${focus}"]`, inner)?.focus();
-  if (S.web) return animateValues(card); // la hoja crece sola con su contenido
+  if (S.web) return animateValues(card); // la página crece sola con su contenido
   const H = $('#widget').clientHeight;
   const h = Math.min(measure(html, card.offsetWidth), H - 24);
   const oldH = card.offsetHeight;
@@ -723,7 +846,7 @@ function updateCard() {
 function closeCard(instant) {
   const card = $('#card');
   if (!ui.card) return;
-  if (S.web) return closeSheet(instant);
+  if (S.web) return navBack(); // en el móvil, cerrar es volver atrás
   const anchor = ui.card.anchor && $(`[data-key="${ui.card.anchor}"]`);
   ui.card = null;
   if (instant || !card.classList.contains('show')) return card.classList.remove('show');
@@ -780,123 +903,122 @@ function dayFull(d) {
       <button data-act="swap" data-type="new-ms" data-date="${d}">${icon('cap', 20)}<span>Examen</span></button>
       <button data-act="day-todo" data-date="${d}">${icon('checklist', 20)}<span>Recordatorio</span></button>
     </div>
-    <div class="df-hint">Desliza a los lados para cambiar de día · hacia abajo para cerrar</div>`;
+    <div class="df-hint">Desliza a los lados para cambiar de día</div>`;
 }
 
-// --- Hojas (en el móvil sustituyen a las tarjetas flotantes). Un día es una hoja de página. ---
-// Movimiento con la curva de las hojas de iOS: sale rápido y frena sin rebote (lo grande nunca rebota:
-// un rebote deja ver lo de debajo). Solo se anima transform y opacity. Ver MOBILE-QUALITY.md.
+// --- Páginas: en el móvil cada vista es una pantalla del historial del navegador ---
+// «Atrás» es el del sistema (gesto de Safari, botón o gesto de Android) y el cambio de pantalla lo anima el propio
+// navegador con View Transitions: la nueva entra desde la derecha, como en iOS. Ver MOBILE-QUALITY.md.
 const EASE_IOS = 'cubic-bezier(0.32, 0.72, 0, 1)';
-const EASE_AWAY = 'cubic-bezier(0.3, 0, 0.8, 0.6)';
-function sheetDim(on, o) {
-  let dim = $('#sheet-dim');
-  if (!dim) {
-    dim = document.createElement('div');
-    dim.id = 'sheet-dim';
-    dim.addEventListener('click', () => (ui.card ? closeCard() : ui.how === 'open' && closeHow()));
-    $('#widget').appendChild(dim);
-  }
-  dim.classList.toggle('on', on);
-  dim.style.transition = o == null ? '' : 'none'; // siguiendo al dedo, sin retraso
-  dim.style.opacity = o ?? '';
-}
-// Escenario: con una hoja de página abierta, el calendario se encoge y se redondea detrás, como en iOS
-const pushStage = (on) => document.body.classList.toggle('pushed', on);
-let stageFrom = null;
-// Durante un gesto, el escenario acompaña al dedo (p: 0 = encogido del todo, 1 = en su sitio)
-function stageFollow(p) {
-  const st = $('#stage');
-  if (!st) return;
-  if (!stageFrom) { const m = new DOMMatrix(getComputedStyle(st).transform); stageFrom = { s: m.a, y: m.f }; }
-  st.style.transition = 'none';
-  st.style.transform = `translate3d(0,${stageFrom.y * (1 - p)}px,0) scale(${stageFrom.s + (1 - stageFrom.s) * p})`;
-}
-// Al soltar: vuelve a lo que digan las clases, con su transición
-function stageRelease() {
-  const st = $('#stage');
-  stageFrom = null;
-  if (st) st.style.transition = st.style.transform = '';
-}
-// Posición de un elemento del calendario sin las transformaciones del escenario
-function stageRect(el) {
-  let x = 0, y = 0, n = el;
-  const st = $('#stage');
-  while (n && n !== st) { x += n.offsetLeft; y += n.offsetTop; n = n.offsetParent; }
-  return { left: x, top: y, width: el.offsetWidth, height: el.offsetHeight };
-}
-// Transformación que lleva la hoja al rectángulo r (para crecer desde una casilla o volver a ella)
-const toRect = (r, box) => `translate(${r.left - box.left}px, ${r.top - box.top}px) scale(${r.width / box.width}, ${r.height / box.height})`;
+const ROOT = { k: 'root' };
+const nav = { pending: false, depth: 0, n: 0 };
+const navCur = () => (history.state?.scr ? history.state : { scr: ROOT, depth: 0 });
+const pageOf = (v) => ({ type: v.type, id: v.id, date: v.date, ms: v.ms });
+const reduceMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+const pageEl = () => $('#card.page.show') || $('#how.open');
 const sheetInner = (v) => (v.type === 'day' ? dayFull(v.date) : cardHTML(v));
-function openSheet(v, anchorEl) {
-  const card = $('#card');
-  const html = sheetInner(v);
-  if (!html) return;
-  const full = v.type === 'day';
-  const from = full && anchorEl?.classList?.contains('cell') ? stageRect(anchorEl) : null;
-  ui.card = { ...v, anchor: null };
-  card.getAnimations({ subtree: true }).forEach((a) => a.cancel());
-  card.removeAttribute('style');
-  card.className = 'card show sheet' + (full ? ' full' : '');
-  card.innerHTML = `<div class="sheet-top"><button class="ibtn sheet-back" data-act="card-back" title="Atrás">${icon('chevL', 22)}</button><div class="grabber"></div></div><div class="card-in">${html}</div>`;
-  sheetDim(true);
-  if (full) pushStage(true);
-  if (from) {
-    // El día crece desde su casilla hasta ser una hoja de página
-    const box = card.getBoundingClientRect();
-    card.animate([{ transformOrigin: '0 0', transform: toRect(from, box), opacity: 0 }, { opacity: 1, offset: 0.3 }, { transformOrigin: '0 0', transform: 'none', opacity: 1 }], { duration: 500, easing: EASE_IOS });
-    $('.card-in', card).animate([{ opacity: 0 }, { opacity: 0, offset: 0.25 }, { opacity: 1 }], { duration: 460, easing: 'ease-out' });
-  } else card.animate([{ transform: 'translate3d(0,100%,0)' }, { transform: 'none' }], { duration: 500, easing: EASE_IOS });
-  afterCard();
+// Cambio de pantalla. dir: 1 adelante, -1 atrás, 0 sustituir (fundido), null sin animación (p. ej. si el gesto
+// de atrás de Safari ya la ha animado)
+function transition(dir, update) {
+  if (dir === null || reduceMotion() || document.hidden) return update();
+  if (!document.startViewTransition) {
+    // Sin View Transitions (iOS < 18): la pantalla nueva entra deslizando; al volver, cambio directo
+    update();
+    if (dir > 0) pageEl()?.animate([{ transform: 'translate3d(100%,0,0)' }, { transform: 'none' }], { duration: 420, easing: EASE_IOS });
+    return;
+  }
+  const root = document.documentElement;
+  const n = ++nav.n;
+  root.dataset.nav = dir > 0 ? 'push' : dir < 0 ? 'pop' : 'fade';
+  document.startViewTransition(update).finished.finally(() => n === nav.n && delete root.dataset.nav);
 }
-function swapSheet(v, dir = 0) {
-  const card = $('#card');
-  const html = sheetInner(v);
-  if (!html) return closeCard();
-  ui.card = { ...v, anchor: null, root: ui.card?.root || (card.classList.contains('full') ? 'day' : null) };
-  const top0 = card.getBoundingClientRect().top;
-  $('.card-in', card).outerHTML = `<div class="card-in">${html}</div>`;
-  $('.card-in', card).animate(dir ? [{ opacity: 0, transform: `translate3d(${dir * 40}px,0,0)` }, { opacity: 1, transform: 'none' }] : [{ opacity: 0, transform: 'translate3d(0,8px,0)' }, { opacity: 1, transform: 'none' }], { duration: 340, easing: EASE_IOS });
-  // La hoja cambia de alto: su borde superior viaja de la posición vieja a la nueva (FLIP, sin animar el alto)
-  const dy = top0 - card.getBoundingClientRect().top;
-  if (!card.classList.contains('full') && Math.abs(dy) > 2) card.animate([{ transform: `translate3d(0,${dy}px,0)` }, { transform: 'none' }], { duration: 420, easing: EASE_IOS });
-  afterCard();
+// sync: cambia ya (sin esperar a la transición) para poder enfocar un campo y que iOS abra el teclado
+function navTo(scr, { replace = false, sync = false, after } = {}) {
+  const cur = navCur();
+  history[replace ? 'replaceState' : 'pushState'](replace ? { ...cur, scr } : { scr, depth: cur.depth + 1, prev: cur.scr }, '');
+  const update = () => { applyScreen(scr); after?.(); };
+  if (!sync) return transition(replace ? 0 : 1, update);
+  update();
+  if (!replace && !reduceMotion()) pageEl()?.animate([{ transform: 'translate3d(100%,0,0)' }, { transform: 'none' }], { duration: 420, easing: EASE_IOS });
 }
-function closeSheet(instant, fromY = 0) {
-  const card = $('#card');
-  const v = ui.card;
-  ui.card = null;
-  if (ui.how !== 'open') (sheetDim(false), pushStage(false), stageRelease());
-  card.classList.remove('has-back');
-  card.getAnimations({ subtree: true }).forEach((a) => a.cancel());
-  if (instant) return card.classList.remove('show');
-  const cell = v?.type === 'day' && !fromY && $(`.cell[data-date="${v.date}"]`);
-  let anim;
-  if (cell) {
-    // Vuelve a encogerse hacia su casilla
-    const box = card.getBoundingClientRect();
-    $('.card-in', card).animate([{ opacity: 1 }, { opacity: 0 }], { duration: 160, fill: 'forwards' });
-    anim = card.animate([{ transformOrigin: '0 0', transform: 'none', opacity: 1 }, { opacity: 1, offset: 0.55 }, { transformOrigin: '0 0', transform: toRect(stageRect(cell), box), opacity: 0 }], { duration: 420, easing: EASE_IOS, fill: 'forwards' });
-  } else anim = card.animate([{ transform: `translate3d(0,${fromY}px,0)` }, { transform: 'translate3d(0,100%,0)' }], { duration: Math.max(220, 380 - fromY * 0.4), easing: fromY ? EASE_IOS : EASE_AWAY, fill: 'forwards' });
-  anim.onfinish = () => {
-    if (ui.card) return;
-    card.classList.remove('show');
-    card.getAnimations({ subtree: true }).forEach((a) => a.cancel());
-  };
+function navBack() {
+  if (nav.pending) return;
+  if (navCur().depth > 0) (nav.pending = true), history.back();
+  else transition(-1, () => applyScreen(ROOT));
 }
-// Cambiar de día dentro de la vista de día (botones o deslizando)
-function stepDay(n, fromX = 0) {
-  if (ui.card?.type !== 'day') return;
-  const date = addDays(ui.card.date, n);
-  const inner = $('#card .card-in');
-  const w = innerWidth;
-  const out = inner.animate([{ transform: `translate3d(${fromX}px,0,0)`, opacity: 1 - Math.abs(fromX) / w }, { transform: `translate3d(${-n * w * 0.6}px,0,0)`, opacity: 0 }], { duration: 170, easing: EASE_AWAY, fill: 'forwards' });
-  out.onfinish = () => {
-    ui.card = { ...ui.card, date };
-    inner.innerHTML = dayFull(date);
-    out.cancel();
-    inner.animate([{ transform: `translate3d(${n * w * 0.45}px,0,0)`, opacity: 0 }, { transform: 'none', opacity: 1 }], { duration: 380, easing: EASE_IOS });
-    inner.scrollTop = 0;
-  };
+function navRoot() {
+  if (nav.pending) return;
+  const d = navCur().depth;
+  if (d > 0) (nav.pending = true), history.go(-d);
+  else transition(-1, () => applyScreen(ROOT));
+}
+window.addEventListener('popstate', (e) => {
+  if (!S?.web) return;
+  nav.pending = false;
+  const st = navCur();
+  transition(e.hasUAVisualTransition ? null : st.depth < nav.depth ? -1 : 1, () => applyScreen(st.scr));
+});
+// Al arrancar (o recargar con una pantalla abierta) se vuelve a la pantalla del historial
+function navInit() {
+  if (history.state?.scr && history.state.scr.k !== 'root') applyScreen(history.state.scr);
+  else history.replaceState({ scr: ROOT, depth: 0 }, '');
+  nav.depth = navCur().depth;
+}
+// Pinta la pantalla s sin animar (la animación la pone transition)
+function applyScreen(s) {
+  nav.depth = navCur().depth;
+  const card = $('#card');
+  const html = s.k === 'card' && sheetInner(s.v);
+  if (s.k === 'card' && !html) s = ROOT; // lo que había en esa pantalla ya no existe
+  if (s.k === 'card') {
+    ui.card = { ...s.v, anchor: null };
+    card.removeAttribute('style');
+    card.className = 'card show page' + (s.v.type === 'day' ? ' day' : '');
+    card.innerHTML = `<div class="page-bar">${backBtn()}</div><div class="card-in">${html}</div>`;
+    afterCard();
+  } else if (ui.card || card.classList.contains('show')) {
+    ui.card = null;
+    card.className = 'card';
+    card.innerHTML = '';
+  }
+  if (s.k === 'how') {
+    const same = ui.how === 'open' && ui.howView === s.view && (s.view !== 'todo' || (ui.rm.list || null) === (s.list || null));
+    if (!same && s.view === 'todo') (Object.assign(ui.rm, { list: s.list || null, detail: s.detail || null, draft: null, q: '' }), (ui.colorFor = null));
+    howShow(s.view);
+    if (!same) $('.how-body').scrollTop = 0;
+  } else if (ui.how === 'open') {
+    ui.how = 'idle';
+    renderHow();
+  }
+  document.body.classList.toggle('paged', s.k !== 'root');
+}
+// Botón «‹ Atrás» con el nombre de la pantalla anterior, como en iOS
+const rmListLabel = (l) => RM_SMART[l]?.name || (l.startsWith('tag:') ? '#' + l.slice(4) : l.startsWith('proj:') ? proj(l.slice(5)).name : rmListOf(l).name);
+function scrLabel(s) {
+  if (!s || s.k === 'root') return 'Calendario';
+  if (s.k === 'card') return s.v.type === 'day' ? cap1(parse(s.v.date).toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric' })) : 'Atrás';
+  if (s.view === 'todo') return s.list ? rmListLabel(s.list) : 'Recordatorios';
+  return { summary: '¿Cómo vas?', organize: 'Organizar', settings: 'Ajustes', ai: 'Claude' }[s.view] || 'Atrás';
+}
+const backBtn = () => `<button class="page-back" data-back title="Atrás">${icon('chevL', 24)}<span>${esc(scrLabel(navCur().prev))}</span></button>`;
+// En la app instalada de iOS no hay gesto de atrás del navegador: deslizar desde el borde izquierdo vuelve atrás
+if (navigator.standalone) {
+  let eg = null;
+  document.addEventListener('touchstart', (e) => {
+    const t = e.touches[0];
+    eg = navCur().depth > 0 && e.touches.length === 1 && t.clientX < 18 ? { x: t.clientX, y: t.clientY, dx: 0, dy: 0, tr: tracker(t.clientX, t.clientY) } : null;
+  }, { passive: true });
+  document.addEventListener('touchmove', (e) => {
+    if (!eg) return;
+    const t = e.touches[0];
+    eg.tr.add(t.clientX, t.clientY);
+    [eg.dx, eg.dy] = [t.clientX - eg.x, t.clientY - eg.y];
+  }, { passive: true });
+  document.addEventListener('touchend', () => {
+    const s = eg;
+    eg = null;
+    if (s && s.dx > 50 && Math.abs(s.dy) < s.dx && (s.dx > 110 || s.tr.v()[0] > 0.3)) (quietClick(), navBack());
+  }, { passive: true });
 }
 
 // --- Gestos que siguen al dedo ---
@@ -916,195 +1038,209 @@ function tracker(x, y) {
   };
 }
 const quietClick = (ms = 80) => { ui.suppressClick = true; setTimeout(() => (ui.suppressClick = false), ms); };
-// Hojas: hacia abajo se cierran (siguiendo al dedo); en la vista de día, a los lados cambian de día.
-// Los listeners viven en la hoja, no en document: así el resto de la página hace scroll sin esperar a JS.
-(() => {
-  const card = $('#card');
+// Inercia: muelle críticamente amortiguado (frena sin rebotar) que arranca con la velocidad del dedo (px/ms).
+// Se convierte en fotogramas para WAAPI: corre en el compositor, sin JS por frame.
+function springFrames(from, to, v0 = 0, response = 0.42) {
+  const w = (2 * Math.PI) / response;
+  const A = from - to, B = v0 * 1000 + w * A;
+  const out = [];
+  for (let t = 0; t < 1.5; t += 1 / 60) {
+    const e = Math.exp(-w * t);
+    let x = (A + B * t) * e;
+    if (A && Math.sign(x) !== Math.sign(A)) x = 0; // nunca se pasa del destino
+    out.push(to + x);
+    if (t > 0.05 && Math.abs(x) < 0.4 && Math.abs((B - w * (A + B * t)) * e) < 15) break;
+  }
+  out.push(to);
+  return { frames: out, duration: (out.length - 1) * (1000 / 60) };
+}
+// Mueve varios elementos a la vez (cada uno con su desfase) con el mismo muelle
+function glide(els, from, to, v0) {
+  const { frames, duration } = springFrames(from, to, v0);
+  const anims = els.map(([el, off]) => el.animate(frames.map((x) => ({ transform: `translate3d(${x + off}px,0,0)` })), { duration, easing: 'linear', fill: 'forwards' }));
+  els.forEach(([el]) => (el.style.transform = '')); // a partir de aquí manda la animación
+  return anims;
+}
+// ¿Pasar a la siguiente página? Lanzamiento en el mismo sentido, o pasada la tercera parte
+function pageDir(dx, vx, w) {
+  const dir = dx < 0 ? 1 : -1;
+  const fling = Math.abs(vx) > 0.35;
+  return (fling ? Math.sign(-vx) === dir : Math.abs(dx) > w * 0.3) ? dir : 0;
+}
+const PAGE_GAP = 16;
+const tx = (x) => `translate3d(${x}px,0,0)`;
+
+// --- El mes, como un carrusel: los meses vecinos ya están al lado mientras arrastras y, al soltar,
+// todo sigue con la velocidad del dedo hasta encajar ---
+const addMonths = (month, n) => { const m = parse(month); m.setMonth(m.getMonth() + n); return iso(m); };
+function withMonth(st, month, fn) {
+  const keep = [S, ui.month];
+  S = st;
+  ui.month = month;
+  try { return fn(); } finally { [S, ui.month] = keep; }
+}
+let car = null; // { dx, w, side: { 1, -1: { month, st, el, ready } }, busy }
+function carSide(c, d, month = addMonths(ui.month, d)) {
+  if (c.side[d]?.month === month) return c.side[d].ready;
+  const s = (c.side[d] = { month });
+  s.ready = api.state(withMonth(S, month, gridRange)).then((st) => {
+    if (c.side[d] !== s || c.done) return null;
+    s.st = st;
+    s.el = document.createElement('div');
+    s.el.className = 'weeks nb';
+    s.el.setAttribute('aria-hidden', 'true');
+    s.el.innerHTML = withMonth(st, month, weeksHTML);
+    s.el.style.transform = tx(c.dx + d * (c.w + PAGE_GAP));
+    $('#cal').appendChild(s.el);
+    return s;
+  });
+  return s.ready;
+}
+function carMove(c) {
+  $('#weeks').style.transform = tx(c.dx);
+  for (const d of [1, -1]) if (c.side[d]?.el) c.side[d].el.style.transform = tx(c.dx + d * (c.w + PAGE_GAP));
+}
+async function carRelease(c, go, vx) {
+  c.busy = true;
+  const side = go ? await carSide(c, go, c.side[go]?.month) : null;
+  if (!side?.el) go = 0;
+  const w = c.w + PAGE_GAP;
+  const els = [[$('#weeks'), 0], ...[1, -1].filter((d) => c.side[d]?.el).map((d) => [c.side[d].el, d * w])];
+  const anims = glide(els, c.dx, go ? -go * w : 0, vx);
+  if (go) {
+    ui.month = side.month;
+    S = side.st;
+    renderHead();
+    $('#head .month')?.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 220, easing: 'ease-out' });
+  }
+  await anims[0].finished;
+  if (go) renderCal(go, false); // mismo contenido que el vecino y ya en su sitio: el relevo no se ve
+  anims.forEach((a) => a.cancel());
+  c.done = true;
+  for (const d of [1, -1]) c.side[d]?.el?.remove();
+  if (car === c) car = null;
+}
+// Flechas y «Hoy»: el mismo carrusel, con un empujón inicial como si lo lanzaras
+async function carGo(month, d) {
+  if (car) return;
+  const c = (car = { dx: 0, w: $('#cal').clientWidth, side: {} });
+  await carSide(c, d, month);
+  return carRelease(c, d, -d * 1.4);
+}
+function monthSwipeInit() {
+  const cal = $('#cal');
   let g = null;
-  card.addEventListener('touchstart', (e) => {
-    if (!S?.web || !card.classList.contains('show') || e.touches.length > 1 || e.target.closest('input, textarea, select')) return;
+  cal.addEventListener('touchstart', (e) => {
+    if (!S?.web || ui.card || ui.how === 'open' || car || e.touches.length > 1 || ui.view === 'week') return;
     const t = e.touches[0];
-    const inner = $('.card-in', card);
-    const full = card.classList.contains('full');
-    g = { inner, full, x: t.clientX, y: t.clientY, top: e.target.closest('.sheet-top') || (inner?.scrollTop || 0) <= 0, axis: null, tr: tracker(t.clientX, t.clientY), dx: 0, dy: 0, h: card.offsetHeight || innerHeight };
+    g = { x: t.clientX, y: t.clientY, on: false, tr: tracker(t.clientX, t.clientY) };
   }, { passive: true });
-  card.addEventListener('touchmove', (e) => {
+  // Pasivo: .cal tiene touch-action: none, así que el navegador no hace nada con el dedo y no hay que esperar a JS
+  cal.addEventListener('touchmove', (e) => {
     if (!g) return;
+    if (pdrag) return (g = null); // arrastrando una barra
     const t = e.touches[0];
     const dx = t.clientX - g.x, dy = t.clientY - g.y;
     g.tr.add(t.clientX, t.clientY);
-    if (!g.axis) {
-      if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
-      if (Math.abs(dy) > Math.abs(dx) && dy > 0 && g.top) g.axis = 'y';
-      else if (Math.abs(dx) > Math.abs(dy) * 1.2 && ui.card?.type === 'day') g.axis = 'x';
-      else return (g = null);
+    if (!g.on) {
+      if (Math.abs(dx) < 8 || Math.abs(dx) < Math.abs(dy)) { if (Math.abs(dy) > 14) g = null; return; }
+      g.on = true;
       clearTimeout(press);
+      clearTimeout(holdT);
+      g.c = car = { dx: 0, w: cal.clientWidth, side: {} };
+      carSide(g.c, 1);
+      carSide(g.c, -1);
     }
-    e.preventDefault();
-    g.dx = dx;
-    if (g.axis === 'y') {
-      // Hacia arriba ofrece resistencia (la hoja se prolonga por debajo: no asoma nada)
-      g.dy = dy > 0 ? dy : -Math.min(28, Math.sqrt(-dy) * 2.2);
-      card.style.transform = `translate3d(0,${g.dy}px,0)`;
-      const p = Math.min(1, Math.max(0, g.dy) / g.h);
-      sheetDim(true, 1 - p);
-      if (g.full) stageFollow(p);
-    } else {
-      g.inner.style.transform = `translate3d(${dx}px,0,0)`;
-      g.inner.style.opacity = 1 - Math.min(0.7, Math.abs(dx) / innerWidth);
-    }
-  }, { passive: false });
+    g.c.dx = dx;
+    carMove(g.c);
+  }, { passive: true });
   const end = () => {
     const s = g;
     g = null;
-    if (!s?.axis) return;
-    quietClick();
-    const [vx, vy] = s.tr.v();
-    if (s.axis === 'y') {
-      card.style.transform = '';
-      if (s.dy > Math.min(140, s.h * 0.3) || (vy > 0.5 && s.dy > 10)) return closeSheet(false, s.dy);
-      // Vuelve a su sitio frenando, sin rebote
-      card.animate([{ transform: `translate3d(0,${s.dy}px,0)` }, { transform: 'none' }], { duration: 420, easing: EASE_IOS });
-      sheetDim(true);
-      if (s.full) stageRelease();
-    } else {
-      s.inner.style.transform = '';
-      s.inner.style.opacity = '';
-      if (Math.abs(s.dx) > innerWidth * 0.25 || Math.abs(vx) > 0.5) return stepDay(s.dx < 0 ? 1 : -1, s.dx);
-      s.inner.animate([{ transform: `translate3d(${s.dx}px,0,0)` }, { transform: 'none' }], { duration: 380, easing: EASE_IOS });
-    }
-  };
-  card.addEventListener('touchend', end, { passive: true });
-  card.addEventListener('touchcancel', end, { passive: true });
-})();
-
-// El mes sigue al dedo: suéltalo con fuerza (o pasada la cuarta parte) y entra el siguiente
-let mswipe = null;
-function monthSwipeInit() {
-  const cal = $('#cal');
-  const weeks = $('#weeks');
-  cal.addEventListener('touchstart', (e) => {
-    if (!S?.web || ui.card || ui.how === 'open' || e.touches.length > 1) return;
-    const t = e.touches[0];
-    mswipe = { x: t.clientX, y: t.clientY, on: false, dx: 0, w: cal.clientWidth, tr: tracker(t.clientX, t.clientY) };
-  }, { passive: true });
-  cal.addEventListener('touchmove', (e) => {
-    if (!mswipe) return;
-    if (pdrag) return (mswipe = null); // arrastrando una barra
-    const t = e.touches[0];
-    const dx = t.clientX - mswipe.x, dy = t.clientY - mswipe.y;
-    mswipe.tr.add(t.clientX, t.clientY);
-    if (!mswipe.on) {
-      if (Math.abs(dx) < 8 || Math.abs(dx) < Math.abs(dy)) { if (Math.abs(dy) > 14) mswipe = null; return; }
-      mswipe.on = true;
-      clearTimeout(press);
-      clearTimeout(holdT);
-    }
-    e.preventDefault();
-    mswipe.dx = dx;
-    // Resistencia suave al principio y libre después
-    weeks.style.transform = `translate3d(${dx}px,0,0)`;
-    weeks.style.opacity = 1 - Math.min(0.55, (Math.abs(dx) / mswipe.w) * 0.7);
-    $('#mname').style.transform = `translateX(${dx * 0.12}px)`;
-  }, { passive: false });
-  const end = async () => {
-    const s = mswipe;
-    mswipe = null;
     if (!s?.on) return;
-    ui.suppressClick = true;
-    setTimeout(() => (ui.suppressClick = false), 80);
-    const [vx] = s.tr.v();
-    const op = +weeks.style.opacity || 1;
-    weeks.style.transform = weeks.style.opacity = '';
-    $('#mname').style.transform = '';
-    if (Math.abs(s.dx) < s.w * 0.22 && Math.abs(vx) < 0.45) {
-      weeks.animate([{ transform: `translate3d(${s.dx}px,0,0)`, opacity: op }, { transform: 'none', opacity: 1 }], { duration: 420, easing: EASE_IOS });
-      return;
-    }
-    const dir = s.dx < 0 ? 1 : -1;
-    const m = parse(ui.month);
-    m.setMonth(m.getMonth() + dir);
-    const month = iso(m);
-    const next = api.state((() => { const keep = ui.month; ui.month = month; const r = gridRange(); ui.month = keep; return r; })());
-    const out = weeks.animate([{ transform: `translate3d(${s.dx}px,0,0)`, opacity: op }, { transform: `translate3d(${-dir * s.w}px,0,0)`, opacity: 0 }], { duration: Math.max(110, 220 - Math.abs(vx) * 60), easing: EASE_AWAY, fill: 'forwards' });
-    const [st] = await Promise.all([next, out.finished]);
-    ui.month = month;
-    S = st;
-    renderHead();
-    renderCal(dir, false);
-    out.cancel();
-    weeks.animate([{ transform: `translate3d(${dir * s.w * 0.45}px,0,0)`, opacity: 0 }, { transform: 'none', opacity: 1 }], { duration: 420, easing: EASE_IOS });
-    $('#mname').animate([{ transform: `translateX(${dir * 14}px)`, opacity: 0 }, { transform: 'none', opacity: 1 }], { duration: 380, easing: EASE_IOS });
+    quietClick();
+    carRelease(s.c, pageDir(s.c.dx, s.tr.v()[0], s.c.w), s.tr.v()[0]);
   };
   cal.addEventListener('touchend', end, { passive: true });
   cal.addEventListener('touchcancel', end, { passive: true });
 }
 
-// Panel (hoja de página): desde el borde izquierdo se vuelve atrás; hacia abajo (arriba del todo) se cierra.
-// Abrir y cerrar es una transición de CSS sobre transform; el gesto solo la sustituye mientras dura.
+// --- Vista de un día: a los lados, el día anterior y el siguiente (mismo carrusel) ---
+let dcar = null;
+function dayNeighbor(c, d) {
+  const inner = $('#card .card-in:not(.nb)');
+  const el = document.createElement('div');
+  el.className = 'card-in nb';
+  el.setAttribute('aria-hidden', 'true');
+  Object.assign(el.style, { position: 'absolute', left: '0', top: inner.offsetTop + 'px', width: inner.offsetWidth + 'px', height: inner.offsetHeight + 'px', overflow: 'hidden', transform: tx(c.dx + d * (c.w + PAGE_GAP)) });
+  el.innerHTML = dayFull(addDays(ui.card.date, d));
+  $('#card').appendChild(el);
+  c.side[d] = el;
+}
+async function dayRelease(c, go, vx) {
+  c.busy = true;
+  const inner = $('#card .card-in:not(.nb)');
+  const w = c.w + PAGE_GAP;
+  const anims = glide([[inner, 0], [c.side[1], w], [c.side[-1], -w]], c.dx, go ? -go * w : 0, vx);
+  await anims[0].finished;
+  if (go && ui.card?.type === 'day') {
+    ui.card = { ...ui.card, date: addDays(ui.card.date, go) };
+    history.replaceState({ ...navCur(), scr: { k: 'card', v: pageOf(ui.card) } }, '');
+    inner.innerHTML = dayFull(ui.card.date);
+    inner.scrollTop = 0;
+  }
+  anims.forEach((a) => a.cancel());
+  c.side[1].remove();
+  c.side[-1].remove();
+  if (dcar === c) dcar = null;
+}
+// Cambiar de día con botones o con el teclado
+function stepDay(n) {
+  if (ui.card?.type !== 'day' || dcar) return;
+  const c = (dcar = { dx: 0, w: $('#card').clientWidth, side: {} });
+  dayNeighbor(c, 1);
+  dayNeighbor(c, -1);
+  dayRelease(c, n, -n * 1.4);
+}
 (() => {
-  const how = $('#how');
+  const card = $('#card');
   let g = null;
-  how.addEventListener('touchstart', (e) => {
-    if (!S?.web || ui.how !== 'open' || e.touches.length > 1) return;
+  card.addEventListener('touchstart', (e) => {
+    if (!S?.web || ui.card?.type !== 'day' || dcar || e.touches.length > 1 || e.target.closest('input, textarea, select')) return;
     const t = e.touches[0];
-    const body = $('.how-body', how);
-    g = { x: t.clientX, y: t.clientY, edge: t.clientX < 24, top: body.scrollTop <= 0 && !e.target.closest('.rm-row, input, textarea, select'), axis: null, tr: tracker(t.clientX, t.clientY), dx: 0, dy: 0, h: how.offsetHeight || innerHeight };
+    if (navigator.standalone && t.clientX < 18) return; // es el gesto de atrás
+    g = { x: t.clientX, y: t.clientY, on: false, tr: tracker(t.clientX, t.clientY) };
   }, { passive: true });
-  how.addEventListener('touchmove', (e) => {
+  // Pasivo: el contenido tiene touch-action: pan-y (el scroll vertical es nativo y el horizontal es nuestro)
+  card.addEventListener('touchmove', (e) => {
     if (!g) return;
     const t = e.touches[0];
     const dx = t.clientX - g.x, dy = t.clientY - g.y;
     g.tr.add(t.clientX, t.clientY);
-    if (!g.axis) {
-      if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
-      if (g.edge && dx > 0 && Math.abs(dx) > Math.abs(dy)) g.axis = 'x';
-      else if (g.top && dy > 0 && Math.abs(dy) > Math.abs(dx) * 1.2) g.axis = 'y';
-      else return (g = null);
+    if (!g.on) {
+      if (Math.abs(dx) < 10 || Math.abs(dx) < Math.abs(dy) * 1.2) { if (Math.abs(dy) > 12) g = null; return; }
+      g.on = true;
       clearTimeout(press);
+      g.c = dcar = { dx: 0, w: card.clientWidth, side: {} };
+      dayNeighbor(g.c, 1);
+      dayNeighbor(g.c, -1);
     }
-    e.preventDefault();
-    g.dx = Math.max(0, dx);
-    g.dy = Math.max(0, dy);
-    how.style.transition = 'none';
-    how.style.transform = g.axis === 'x' ? `translate3d(${g.dx}px,0,0)` : `translate3d(0,${g.dy}px,0)`;
-    if (g.axis === 'y') {
-      const p = Math.min(1, g.dy / g.h);
-      sheetDim(true, 1 - p);
-      stageFollow(p);
-    }
-  }, { passive: false });
+    const c = g.c;
+    c.dx = dx;
+    $('#card .card-in:not(.nb)').style.transform = tx(dx);
+    c.side[1].style.transform = tx(dx + c.w + PAGE_GAP);
+    c.side[-1].style.transform = tx(dx - c.w - PAGE_GAP);
+  }, { passive: true });
   const end = () => {
     const s = g;
     g = null;
-    if (!s?.axis) return;
+    if (!s?.on) return;
     quietClick();
-    const [vx, vy] = s.tr.v();
-    if (s.axis === 'y') {
-      // Con la transición de la hoja otra vez activa, quitar el desplazamiento la lleva a su sitio o la cierra
-      how.style.transition = how.style.transform = '';
-      if (s.dy > Math.min(160, s.h * 0.3) || (vy > 0.5 && s.dy > 10)) return closeHow();
-      sheetDim(true);
-      return stageRelease();
-    }
-    if (s.dx < innerWidth * 0.3 && vx < 0.5) return (how.style.transition = how.style.transform = '');
-    // Borde izquierdo: atrás (o cerrar, si ya estás en la primera pantalla)
-    const back = ui.howView !== 'summary' || ui.rm.list;
-    if (!back) (sheetDim(false), pushStage(false), stageRelease());
-    const a = how.animate([{ transform: `translate3d(${s.dx}px,0,0)` }, { transform: `translate3d(${innerWidth}px,0,0)` }], { duration: 200, easing: EASE_AWAY, fill: 'forwards' });
-    a.onfinish = () => {
-      how.style.transform = '';
-      if (back) {
-        if (ui.howView === 'todo' && ui.rm.list) actions['rm-open']({ dataset: { l: '' } });
-        else openHow('summary');
-        how.animate([{ transform: 'translate3d(-30%,0,0)', opacity: 0.4 }, { transform: 'none', opacity: 1 }], { duration: 380, easing: EASE_IOS });
-      } else closeHow(); // sin transición: ya está fuera de la pantalla
-      a.cancel();
-      requestAnimationFrame(() => (how.style.transition = ''));
-    };
+    const [vx] = s.tr.v();
+    dayRelease(s.c, pageDir(s.c.dx, vx, s.c.w), vx);
   };
-  how.addEventListener('touchend', end, { passive: true });
-  how.addEventListener('touchcancel', end, { passive: true });
+  card.addEventListener('touchend', end, { passive: true });
+  card.addEventListener('touchcancel', end, { passive: true });
 })();
 
 // ================= Recordatorios: el //TODO general, estilo iPhone, con sangría sin límite =================
@@ -1210,7 +1346,7 @@ function rmHome() {
   const tags = Object.keys(c.tags || {}).sort();
   const projs = S.db.projects.filter((p) => rmAll().some((t) => t.projectId === p.id && !t.done));
   return `
-    <div class="rm-top" data-key="rmtop"><button class="rm-back" data-act="how-view" data-v="summary">${icon('chevL', 18)}<span>¿Cómo vas?</span></button><button class="ibtn" data-act="how-close" title="Cerrar">${icon('x', 16)}</button></div>
+    <div class="rm-top" data-key="rmtop">${S.web ? backBtn() : `<button class="rm-back" data-act="how-view" data-v="summary">${icon('chevL', 18)}<span>¿Cómo vas?</span></button>`}<button class="ibtn" data-act="how-close" title="Cerrar">${icon('x', 16)}</button></div>
     <div class="rm-big" data-key="rmbig">Recordatorios</div>
     <label class="rm-search" data-key="rmsearch">${icon('search', 15)}<input data-rm-search placeholder="Buscar" value="${esc(ui.rm.q)}" enterkeyhint="search"></label>
     ${ui.rm.q.trim() ? `<div class="rm-rows" data-key="rmres">${rmSmartItems('all').map((t) => rmRow(t, 0, true)).join('') || '<div class="hint" style="padding:10px 4px">Nada coincide.</div>'}</div>` : `
@@ -1259,7 +1395,7 @@ function rmListView() {
   }
   const doneN = real ? rmAll().filter((t) => (t.listId || 'inbox') === id && t.done).length : 0;
   return `
-    <div class="rm-top" data-key="rmtop"><button class="rm-back" data-act="rm-open" data-l="">${icon('chevL', 18)}<span>Listas</span></button>
+    <div class="rm-top" data-key="rmtop">${S.web ? backBtn() : `<button class="rm-back" data-act="rm-open" data-l="">${icon('chevL', 18)}<span>Listas</span></button>`}
       <div style="display:flex;gap:2px">${real && id !== 'inbox' ? `<button class="ibtn" data-act="rm-list-menu" data-id="${id}" title="Lista">${icon('more', 16)}</button>` : ''}<button class="ibtn" data-act="how-close" title="Cerrar">${icon('x', 16)}</button></div></div>
     <div class="rm-title" data-key="rmtitle" style="--c:${list.color}">${real && id !== 'inbox' ? `<input class="rm-title-in" data-rm-listname="${id}" value="${esc(list.name)}">` : `<span>${esc(list.name)}</span>`}<span class="n">${count || ''}</span></div>
     ${real && ui.colorFor === id ? paletteRow(id, list.color, 'todoList') : ''}
@@ -1426,6 +1562,7 @@ document.addEventListener('input', (e) => {
     ui.rm.q = e.target.value;
     renderHow(true);
   }
+  if (e.target.matches?.('[data-ai-text]')) ui.aiDraft = e.target.value;
 });
 document.addEventListener('focusin', (e) => {
   if (e.target.matches?.('.rm-t')) $('#how').classList.add('rm-editing');
@@ -1580,7 +1717,7 @@ function howSummary() {
   const verdict = late ? `Llevas ${late} tarea${late > 1 ? 's' : ''} atrasada${late > 1 ? 's' : ''}` : all.total && all.done === all.total ? 'Hoy ya está hecho' : 'Vas al día';
   return `
     <div class="how-top"><div><div class="greet">${greeting()}</div><div class="sub">${fmtLong(S.today)}</div></div>
-      <div style="display:flex;gap:2px"><button class="ibtn" data-act="rm-go" title="Recordatorios">${icon('checklist', 16)}</button><button class="ibtn" data-act="how-view" data-v="organize" title="Organizar: proyectos, capas y calendarios">${icon('folder', 16)}</button><button class="ibtn" data-act="how-view" data-v="settings" title="Ajustes">${icon('gear', 16)}</button><button class="ibtn" data-act="how-close" title="Cerrar">${icon('x', 16)}</button></div></div>
+      <div style="display:flex;gap:2px">${S.web ? backBtn() : ''}<button class="ibtn" data-act="rm-go" title="Recordatorios">${icon('checklist', 16)}</button><button class="ibtn" data-act="how-view" data-v="organize" title="Organizar: proyectos, capas y calendarios">${icon('folder', 16)}</button><button class="ibtn" data-act="how-view" data-v="settings" title="Ajustes">${icon('gear', 16)}</button><button class="ibtn" data-act="how-close" title="Cerrar">${icon('x', 16)}</button></div></div>
     ${text ? `<div class="ai-line">${icon('spark', 15)}<span>${esc(text)}</span></div>` : aiLoading ? `<div class="ai-line loading">${icon('spark', 15)}<span>Pensando en tu día…</span></div>` : ''}
     ${b.moved.length ? `<div class="sub" style="margin-top:12px">↻ ${b.moved.length} tarea${b.moved.length > 1 ? 's' : ''} de días anteriores ${b.moved.length > 1 ? 'pasaron' : 'pasó'} a tus próximos bloques.</div>` : ''}
     <div class="how-cols">
@@ -1603,7 +1740,7 @@ function howSummary() {
 let memCache = null;
 // Cabecera común de las pantallas del panel: volver, título y pestañas Organizar / Ajustes
 function howHead(title) {
-  return `<div class="how-top hh"><div style="display:flex;align-items:center;gap:6px"><button class="ibtn" data-act="how-view" data-v="summary" title="Volver">${icon('chevL', 17)}</button><div class="greet" style="font-size:24px">${title}</div></div>
+  return `<div class="how-top hh"><div style="display:flex;align-items:center;gap:6px">${S.web ? backBtn() : `<button class="ibtn" data-act="how-view" data-v="summary" title="Volver">${icon('chevL', 17)}</button>`}<div class="greet" style="font-size:24px">${title}</div></div>
       <div style="display:flex;align-items:center;gap:8px"><div class="seg" data-seg="howtab">${[['organize', 'Organizar'], ['settings', 'Ajustes']].map(([v, l]) => `<button type="button" class="${ui.howView === v ? 'on' : ''}" data-act="how-view" data-v="${v}">${l}</button>`).join('')}</div>
       <button class="ibtn" data-act="how-close" title="Cerrar">${icon('x', 16)}</button></div></div>`;
 }
@@ -1661,7 +1798,7 @@ function howOrganize() {
         ${sec('sec-subs', 'cal', 'Calendarios suscritos', 'Calendarios externos (Google, Outlook, iCloud). Sus eventos son de solo lectura y se actualizan solos.', `
           ${(S.db.subscriptions || []).map((s) => `<div class="list-row" data-key="sb-${s.id}" style="cursor:default"><button class="color-btn ${ui.colorFor === s.id ? 'open' : ''}" style="--c:${s.color}" data-act="pick-color" data-id="${s.id}" title="Cambiar color"></button>
             <div class="grow"><div class="ttl">${esc(s.name)}</div><div class="meta">${s.error ? `<span style="color:var(--late)">No se pudo descargar: ${esc(s.error)}</span>` : s.lastSync ? `${s.count || 0} eventos · actualizado ${new Date(s.lastSync).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}` : 'Descargando…'}</div></div>
-            <button class="ibtn" data-act="refresh-sub" data-id="${s.id}" title="Actualizar ahora">${icon('redo', 13)}</button><button class="ibtn" data-act="del-sub" data-id="${s.id}" title="Quitar">${icon('trash', 13)}</button></div>
+            <button class="pchip ${s.blocking ? 'on' : ''}" style="--c:${s.color}" data-act="sub-blocking" data-id="${s.id}" title="Sus eventos bloquean su hueco en todas las capas">${icon('clock', 11)} Bloqueante</button><button class="ibtn" data-act="refresh-sub" data-id="${s.id}" title="Actualizar ahora">${icon('redo', 13)}</button><button class="ibtn" data-act="del-sub" data-id="${s.id}" title="Quitar">${icon('trash', 13)}</button></div>
             ${ui.colorFor === s.id ? paletteRow(s.id, s.color, 'sub') : ''}`).join('')}
           <div class="sub-form"><input class="input" data-sub-name placeholder="Nombre (p. ej. «Horario de clases»)"><input class="input" data-sub-url placeholder="https://…/basic.ics o webcal://…"><button class="btn primary" data-act="add-sub" style="justify-self:start">Suscribirme</button></div>
           <div class="sec-d" style="margin-top:10px">En Google Calendar: Configuración → tu calendario → «Dirección secreta en formato iCal».</div>`)}
@@ -1680,6 +1817,18 @@ function howOrganize() {
     </div>`;
 }
 
+
+// ---------- Claude en el móvil: se escribe aquí y se abre Claude, que usa el conector del calendario ----------
+const AI_SUGGEST = ['¿Qué tengo hoy?', '¿Cómo voy con mis exámenes?', 'Apúntame para mañana: ', 'Planifícame el estudio del próximo examen'];
+function howAI() {
+  const ok = mcpCache && !mcpCache.error;
+  return `<div class="how-top hh"><div style="display:flex;align-items:center;gap:6px">${backBtn()}<div class="greet" style="font-size:24px">Claude</div></div><div></div></div>
+    <div class="sub ai-intro">Escribe lo que necesites y se abre Claude con tu mensaje. Claude ve y cambia tu calendario y tus recordatorios con el conector «Golden&#39;s Calendar», aunque el PC esté apagado.</div>
+    <div class="ai-box" data-key="ai-box"><textarea class="input" data-ai-text rows="4" enterkeyhint="send" placeholder="«¿Qué me queda de Física?», «muéveme el bloque de hoy a mañana»…">${esc(ui.aiDraft || '')}</textarea>
+      <button class="btn primary" data-act="ai-send">${icon('send', 15)} Abrir en Claude</button></div>
+    <div class="chips-row ai-chips" data-key="ai-chips">${AI_SUGGEST.map((q) => `<button class="pchip" data-act="ai-suggest" data-q="${esc(q)}">${esc(q)}</button>`).join('')}</div>
+    ${sec('sec-remote', 'spark', ok ? 'Conector activo' : 'Conecta Claude (una vez)', ok ? 'Claude ya puede usar tu calendario.' : 'Crea el enlace y añádelo en Claude como conector. Después, todo lo que escribas aquí lo podrá hacer Claude.', mcpSection())}`;
+}
 
 // ---------- Claude desde cualquier sitio (MCP remoto) ----------
 let mcpCache;
@@ -1760,19 +1909,29 @@ function renderHow(force = true) {
   const scroll = body.scrollTop;
   const view = ui.howView;
   if (body.dataset.view !== view) (body.innerHTML = ''), (body.dataset.view = view); // otra pantalla: entra completa
-  morph(body, view === 'settings' ? howSettings() : view === 'organize' ? howOrganize() : view === 'todo' ? howTodo() : howSummary());
+  morph(body, view === 'settings' ? howSettings() : view === 'organize' ? howOrganize() : view === 'todo' ? howTodo() : view === 'ai' ? howAI() : howSummary());
   body.scrollTop = scroll;
   animateValues(body);
   if (view === 'todo') (rmBar(), rmFit(body));
 }
 function openHow(view = 'summary') {
+  if (S.web) {
+    // En el móvil es una pantalla del historial; Organizar ↔ Ajustes son pestañas (sustituyen, no apilan)
+    const cur = navCur().scr;
+    const tabs = ['organize', 'settings'];
+    if (cur.k === 'how' && cur.view === view && view !== 'todo') return;
+    return navTo({ k: 'how', view, list: null }, { replace: cur.k === 'how' && tabs.includes(cur.view) && tabs.includes(view) });
+  }
   closeCard(true);
   if (view === 'todo' && ui.howView !== 'todo') (ui.rm.draft = null), (ui.rm.detail = null);
+  howShow(view);
+}
+function howShow(view) {
   ui.how = 'open';
   ui.howView = view;
   if (ui.fresh) { ui.fresh = false; api.briefingSeen(); if (S.web) renderDock(); }
   renderHow();
-  if (S.web) (sheetDim(true), pushStage(true)); // hoja de página: el calendario se encoge detrás
+  if (view === 'ai' && S.cloud?.email && mcpCache === undefined) loadMcp();
   if (view === 'summary' && S.account.ok && !(S.db.meta.briefingDate === S.today && S.db.meta.briefingText) && !aiLoading) {
     aiLoading = true;
     renderHow();
@@ -1781,8 +1940,8 @@ function openHow(view = 'summary') {
   if (view === 'settings') { api.memories().then((m) => { memCache = m; renderHow(); }); if (S.cloud?.email) loadMcp(); }
 }
 function closeHow() {
+  if (S?.web) return navRoot(); // en el móvil, cerrar = volver al calendario
   ui.how = 'idle';
-  if (S?.web) (sheetDim(false), pushStage(false), stageRelease());
   renderHow();
 }
 
@@ -1991,20 +2150,50 @@ function popCheck(el, done) {
 }
 const actions = {
   month: (el) => changeMonth(+el.dataset.d),
-  today: () => { return goMonth(S.today.slice(0, 8) + '01', S.today < ui.month ? -1 : 1); },
+  today: () => {
+    if (ui.view === 'week') { const d = S.today < ui.weekStart ? -1 : 1; ui.weekStart = mondayOf(S.today); ui.month = S.today.slice(0, 8) + '01'; return goWeekOrMonth(d); }
+    return goMonth(S.today.slice(0, 8) + '01', S.today < ui.month ? -1 : 1);
+  },
+  'toggle-view': () => setView(ui.view === 'week' ? 'month' : 'week'),
+  // Clic en un hueco libre de la semana: bloque nuevo a esa hora
+  'wk-slot': (el, e) => {
+    if (e.target.closest('.wk-it')) return;
+    const g = el.closest('.wk-grid');
+    const m = +g.dataset.h0 + (e.clientY - el.getBoundingClientRect().top) / +g.dataset.ppm;
+    const start = hhmmOf(Math.max(0, Math.min(1410, Math.floor(m / 30) * 30)));
+    if (ui.card) return closeCard();
+    openCard({ type: 'new-block', date: el.dataset.date, start }, el);
+  },
+  'force-last': async () => {
+    const r = ui.retry;
+    if (!r) return;
+    ui.retry = null;
+    await run(r.name, { ...r.input, allowOverlap: true });
+    closeCard(true);
+    await refresh();
+    toast(`${icon('check', 14)} Puesto encima del tiempo bloqueado`);
+  },
+  'sub-blocking': async (el) => { const s = byId(S.db.subscriptions, el.dataset.id); await run('update_subscription', { id: s.id, blocking: !s.blocking }); await refresh(); renderHow(true); },
   demo: async () => { await api.demo(); await refresh(); toast(`${icon('spark', 14)} Ejemplo cargado`); },
   open: (el) => {
     const v = { type: el.dataset.type, id: el.dataset.id };
+    if (S.web) return openCard(v, el); // en el móvil se apila una pantalla
     if (ui.card && el.closest('#card')) return swapCard(v);
     if (ui.card) closeCard(true);
     openCard(v, el);
   },
   'open-day': (el) => { if (ui.card) return closeCard(); openCard({ type: 'day', date: el.dataset.date }, el); },
   'day-step': (el) => stepDay(+el.dataset.d),
-  'day-todo': (el) => { const date = el.dataset.date; closeCard(true); ui.rm.list = 'inbox'; openHow('todo'); ui.rm.draft = { parentId: null, afterId: 'end', listId: null, preset: { due: date } }; rmRender('[data-key="td-draft"] .rm-t'); },
+  'day-todo': (el) => {
+    const date = el.dataset.date;
+    const draft = () => { ui.rm.draft = { parentId: null, afterId: 'end', listId: null, preset: { due: date } }; rmRender('[data-key="td-draft"] .rm-t'); };
+    if (S.web) return navTo({ k: 'how', view: 'todo', list: 'inbox' }, { sync: true, after: draft }); // sin esperar: así iOS abre el teclado
+    closeCard(true); ui.rm.list = 'inbox'; openHow('todo'); ui.rm.draft = { parentId: null, afterId: 'end', listId: null, preset: { due: date } }; rmRender('[data-key="td-draft"] .rm-t'); },
   new: (el) => openCard({ type: el.dataset.type }, el),
-  swap: (el) => { const back = ui.card; swapCard({ type: el.dataset.type, id: el.dataset.id, date: el.dataset.date, ms: el.dataset.ms }); ui.card.back = back; $('#card').classList.toggle('has-back', !!back); },
-  'card-back': () => { const back = ui.card?.back; if (!back) return closeCard(); S.web ? swapSheet(back, -1) : swapCard(back); ui.card.back = back.back; $('#card').classList.toggle('has-back', !!back.back); },
+  swap: (el) => {
+    if (S.web) return navTo({ k: 'card', v: pageOf(el.dataset) });
+    const back = ui.card; swapCard({ type: el.dataset.type, id: el.dataset.id, date: el.dataset.date, ms: el.dataset.ms }); ui.card.back = back; $('#card').classList.toggle('has-back', !!back); },
+  'card-back': () => { if (S.web) return navBack(); const back = ui.card?.back; if (!back) return closeCard(); S.web ? swapSheet(back, -1) : swapCard(back); ui.card.back = back.back; $('#card').classList.toggle('has-back', !!back.back); },
   'close-card': () => closeCard(),
   'toggle-task': async (el, e) => {
     if (e.target.closest('.x')) return;
@@ -2040,6 +2229,12 @@ const actions = {
   'how-close': () => closeHow(),
   'how-view': (el) => openHow(el.dataset.v),
   'how-open-ms': async (el) => {
+    if (S.web) {
+      const m = byId(S.db.milestones, el.dataset.id);
+      if (m) ui.month = m.date.slice(0, 8) + '01'; // al volver, el calendario está en su mes
+      refresh();
+      return navTo({ k: 'card', v: { type: 'ms', id: el.dataset.id } });
+    }
     closeHow();
     const m = byId(S.db.milestones, el.dataset.id);
     const mon = m.date.slice(0, 8) + '01';
@@ -2135,7 +2330,7 @@ const actions = {
   'cloud-signout': (el) => confirmIn(el, async () => { await api.cloudSignOut(); await refresh(); renderHow(true); }),
   'how-open': () => openHow(),
   'rm-go': () => { ui.rm.list = ui.rm.list || null; openHow('todo'); },
-  'rm-open': (el) => { ui.rm.list = el.dataset.l || null; ui.rm.detail = null; ui.rm.draft = null; ui.rm.q = ''; ui.colorFor = null; renderHow(true); $('.how-body').scrollTop = 0; },
+  'rm-open': (el) => { if (S.web) return navTo({ k: 'how', view: 'todo', list: el.dataset.l || null }); ui.rm.list = el.dataset.l || null; ui.rm.detail = null; ui.rm.draft = null; ui.rm.q = ''; ui.colorFor = null; renderHow(true); $('.how-body').scrollTop = 0; },
   'rm-check': (el) => rmToggle(el, el.dataset.id),
   'rm-toggle': (el) => rmToggle(el, el.dataset.id),
   'rm-fold': async (el) => { const t = byId(rmAll(), el.dataset.id); await run('update_todo', { id: t.id, collapsed: !t.collapsed }); rmReload(); },
@@ -2147,7 +2342,7 @@ const actions = {
   'rm-flag': async (el) => { const t = byId(rmAll(), el.dataset.id); await run('update_todo', { id: t.id, flagged: !t.flagged }); rmReload(); },
   'rm-indent': async (el) => { try { await run('indent_todo', { id: el.dataset.id, outdent: !!el.dataset.out }); } catch {} rmReload(); },
   'rm-del': async (el) => { if (ui.rm.detail === el.dataset.id) ui.rm.detail = null; await run('delete_item', { type: 'todo', id: el.dataset.id }); rmReload(); },
-  'rm-goto': (el) => { const t = byId(rmAll(), el.dataset.id); if (!t) return; ui.rm.list = t.listId || 'inbox'; ui.rm.detail = t.id; openHow('todo'); },
+  'rm-goto': (el) => { const t = byId(rmAll(), el.dataset.id); if (!t) return; if (S.web) return navTo({ k: 'how', view: 'todo', list: t.listId || 'inbox', detail: t.id }); ui.rm.list = t.listId || 'inbox'; ui.rm.detail = t.id; openHow('todo'); },
   'rm-list-menu': (el, e) => {
     const id = el.dataset.id;
     const r = el.getBoundingClientRect();
@@ -2155,7 +2350,7 @@ const actions = {
       { label: 'Cambiar color', icon: 'sun', run: () => { ui.colorFor = ui.colorFor === id ? null : id; renderHow(true); } },
       { label: ui.rm.showDone ? 'Ocultar completados' : 'Mostrar completados', icon: 'check', run: () => actions['rm-showdone']() },
       '-',
-      { label: 'Eliminar lista y sus recordatorios', icon: 'trash', danger: true, run: async () => { await run('delete_item', { type: 'todoList', id }); ui.rm.list = null; rmReload(); } },
+      { label: 'Eliminar lista y sus recordatorios', icon: 'trash', danger: true, run: async () => { await run('delete_item', { type: 'todoList', id }); if (S.web) return navBack(); ui.rm.list = null; rmReload(); } },
     ]);
   },
   'mcp-create': (el) => {
@@ -2179,6 +2374,25 @@ const actions = {
   'copy-mcp': async () => { api.copy(JSON.stringify(await api.mcpConfig(), null, 2)); toast(`${icon('check', 14)} Configuración MCP copiada`); },
   'install-skill': async () => { const p = await api.installSkill(); toast(`${icon('check', 14)} Skill instalada en ${esc(p)}`, 4000); },
   'agent-send': () => sendAgent(),
+  // Móvil: Claude se abre con el mensaje escrito y usa el conector del calendario
+  'ai-send': () => {
+    const box = $('[data-ai-text]');
+    const text = (box?.value || '').trim();
+    if (!text) return box?.focus();
+    const msg = `Usa mi conector «Golden's Calendar». ${text}`;
+    api.copy(msg); // por si Claude no lo recoge del enlace: basta con pegarlo
+    window.open('https://claude.ai/new?q=' + encodeURIComponent(msg), '_blank', 'noopener');
+    ui.aiDraft = '';
+    box.value = '';
+    toast(`${icon('spark', 14)} Abriendo Claude · el mensaje también está copiado`, 3500);
+  },
+  'ai-open': () => openHow('ai'),
+  'ai-suggest': (el) => {
+    const box = $('[data-ai-text]');
+    box.value = ui.aiDraft = el.dataset.q;
+    box.focus();
+    box.setSelectionRange(box.value.length, box.value.length);
+  },
 };
 // Muestra el estado del inicio de sesión dentro de la propia tarjeta (no en un aviso que quede tapado)
 function cloudStatus(msg, busy = null) {
@@ -2229,6 +2443,7 @@ function confirmIn(el, fn) {
 document.addEventListener('click', (e) => {
   if (ui.suppressClick) return (ui.suppressClick = false); // el clic que cierra un arrastre o una pulsación larga
   if (e.target.closest('.ctx')) return;
+  if (S?.web && e.target.closest('[data-back]')) return navBack(); // «‹ Atrás» del móvil: el historial del navegador
   const seg = e.target.closest('[data-seg] button');
   if (seg && !seg.dataset.act) {
     const wrap = seg.closest('[data-seg]');
@@ -2244,7 +2459,7 @@ document.addEventListener('click', (e) => {
   if (e.target.closest('#how') && ui.how === 'near') return openHow();
   if (ui.reply && !e.target.closest('#reply, #agent')) hideReply();
   if (ui.layerMenu && !e.target.closest('.layer-menu, .layer-pill')) { ui.layerMenu = false; renderHead(); }
-  if (ui.card && !e.target.closest('#card, #how')) return closeCard(); // primer clic fuera: solo cerrar
+  if (ui.card && !S.web && !e.target.closest('#card, #how')) return closeCard(); // primer clic fuera: solo cerrar
   const el = e.target.closest('[data-act]');
   if (el) actions[el.dataset.act]?.(el, e);
 });
@@ -2324,12 +2539,12 @@ document.addEventListener('submit', async (e) => {
       if (f.dataset.id) {
         const was = S.db.tasks.filter((t) => t.blockId === f.dataset.id).map((t) => t.id);
         for (const id of was.filter((x) => !taskIds.includes(x))) await run('update_task', { id, blockId: '' });
-        await run('update_block', { id: f.dataset.id, title: d.title, date: d.date, endDate: d.endDate || '', start: d.start || '', end: d.end || '', taskIds, categoryId: d.categoryId ?? undefined });
+        await run('update_block', { id: f.dataset.id, title: d.title, date: d.date, endDate: d.endDate || '', start: d.start || '', end: d.end || '', taskIds, categoryId: d.categoryId ?? undefined, blocking: !!d.blocking });
         await refresh();
         return swapCard({ type: 'block', id: f.dataset.id });
       }
       const projectId = await ensureProject();
-      const b = await run('create_block', { projectId, milestoneId: d.milestoneId || undefined, categoryId: d.categoryId || undefined, title: d.title, date: d.date, endDate: d.endDate || undefined, start: d.start || undefined, end: d.end || undefined, taskIds });
+      const b = await run('create_block', { projectId, milestoneId: d.milestoneId || undefined, categoryId: d.categoryId || undefined, blocking: !!d.blocking || undefined, title: d.title, date: d.date, endDate: d.endDate || undefined, start: d.start || undefined, end: d.end || undefined, taskIds });
       toast(`${icon('check', 14)} Bloque creado`);
       await refresh();
       swapCard({ type: 'block', id: b.id });
@@ -2369,8 +2584,9 @@ document.addEventListener('keydown', async (e) => {
     }
     if (kind === 'todo-list') {
       const l = await run('create_todo_list', { name: v });
-      ui.rm.list = l.id;
       await refresh();
+      if (S.web) return navTo({ k: 'how', view: 'todo', list: l.id }, { sync: true, after: () => rmStartDraft(null) });
+      ui.rm.list = l.id;
       return rmStartDraft(null);
     }
     if (kind === 'layer') {
@@ -2398,6 +2614,7 @@ document.addEventListener('keydown', async (e) => {
   }
   if (inp && e.key === 'Escape') return inp.blur();
   if (e.key === 'Enter' && e.target.matches?.('[data-cloud-email], [data-cloud-pw]')) return cloudAuth('in');
+  if (e.key === 'Enter' && !e.shiftKey && e.target.matches?.('[data-ai-text]')) return e.preventDefault(), actions['ai-send']();
   if (e.key === 'Escape') {
     if (ui.card) return closeCard();
     if (ui.how === 'open') return closeHow();
@@ -2408,6 +2625,7 @@ document.addEventListener('keydown', async (e) => {
   else if (e.key === 'ArrowRight') changeMonth(1);
   else if (e.key === '/') { e.preventDefault(); openAgent(); }
   else if (e.key.toLowerCase() === 'r' && !e.ctrlKey && !e.metaKey) actions['rm-go']();
+  else if (e.key.toLowerCase() === 'w' && !e.ctrlKey && !e.metaKey) actions['toggle-view']();
 });
 
 // Móvil: el mes sigue al dedo (ver monthSwipeInit)
@@ -2432,12 +2650,14 @@ $('#cal').addEventListener('wheel', (e) => {
   }
 }, { passive: true });
 function changeMonth(d) {
+  if (ui.view === 'week') return changeWeek(d);
   const m = parse(ui.month);
   m.setMonth(m.getMonth() + d);
   return goMonth(iso(m), d);
 }
 let goSeq = 0;
 async function goMonth(month, d) {
+  if (S?.web && d && month !== ui.month && ui.view !== 'week') return carGo(month, d);
   closeCard(true);
   ui.month = month;
   const seq = ++goSeq;
@@ -2622,8 +2842,10 @@ api.onFlyout(({ show, from }) => {
   document.body.classList.add('glass-' + (new URLSearchParams(location.search).get('glass') || 'clear'));
   const now = new Date();
   ui.month = iso(new Date(now.getFullYear(), now.getMonth(), 1));
+  if (ui.view === 'week') ui.weekStart = mondayOf(iso(now));
   renderDots();
   await refresh();
+  if (S.web) navInit(); // en el móvil, la pantalla que diga el historial (por si se recargó con una abierta)
 })();
 
 
@@ -2736,6 +2958,7 @@ function ctxFor(target) {
     if (type === 'block') {
       const b = byId(S.db.blocks, id);
       const items = [{ label: 'Abrir', icon: 'arrow', run: () => open('block') }, { label: 'Editar', icon: 'edit', run: () => open('edit-block') }];
+      if (b) items.push({ label: b.blocking ? 'Quitar tiempo bloqueado' : 'Marcar como tiempo bloqueado', icon: 'clock', on: !!b.blocking, run: () => run('update_block', { id, blocking: !b.blocking }) });
       if (b && S.stats.blocks[id]?.manual) items.push({ label: b.done ? 'Marcar como pendiente' : 'Marcar como hecho', icon: 'check', run: () => run('update_block', { id, done: !b.done }) });
       if (b && blockEnd(b) < S.today && S.stats.blocks[id]?.pct < 100) items.push({ label: 'Pasar lo pendiente al siguiente bloque', icon: 'redo', run: () => run('rollover_pending', {}) });
       return [...items, '-', del('block')];
@@ -2816,7 +3039,7 @@ weeksEl.addEventListener('pointerdown', (e) => {
   const arm = () => (pdrag = { bar, type: bar.dataset.type, id: bar.dataset.id, x0: e.clientX, y0: e.clientY, from: cell?.dataset.date, started: false });
   if (e.pointerType !== 'touch') return arm();
   clearTimeout(holdT);
-  holdT = setTimeout(() => { if (!mswipe?.on) { arm(); bar.classList.add('armed'); navigator.vibrate?.(10); } }, 300);
+  holdT = setTimeout(() => { if (!car) { arm(); bar.classList.add('armed'); navigator.vibrate?.(10); } }, 300);
 });
 ['pointerup', 'pointercancel'].forEach((ev) => window.addEventListener(ev, () => { clearTimeout(holdT); $$('.bar.armed').forEach((b) => b.classList.remove('armed')); }));
 const colAt = (x) => Math.max(0, Math.min(6, Math.floor(((x - weeksEl.getBoundingClientRect().left) / weeksEl.clientWidth) * 7)));

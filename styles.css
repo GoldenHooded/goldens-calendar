@@ -659,11 +659,8 @@ body.web {
   --line: rgba(255, 255, 255, 0.075); --line-strong: rgba(255, 255, 255, 0.17); --text: #f4f3ee; --muted: #a29f97; --faint: #7a776f;
   --mark: rgba(255, 255, 255, 0.14); --dot: rgba(255, 255, 255, 0.2); --base: 18, 18, 17; --accent-soft: rgba(217, 119, 87, 0.2);
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 26px rgba(0, 0, 0, 0.45); --shadow-lg: 0 2px 8px rgba(0, 0, 0, 0.5), 0 26px 64px rgba(0, 0, 0, 0.65);
-  --sheet-shadow: 0 -10px 40px rgba(0, 0, 0, 0.45);
   --safe-t: env(safe-area-inset-top, 0px); --safe-b: env(safe-area-inset-bottom, 0px);
-  --gutter: 16px; --dock-h: 52px; --dock-b: max(var(--safe-b), 12px);
-  /* Hojas de página: empiezan bajo la barra de estado y la vista de detrás asoma por encima */
-  --sheet-top: calc(max(var(--safe-t), 14px) + 10px);
+  --gutter: 16px; --dock-h: 48px; --dock-b: max(var(--safe-b), 12px);
   color-scheme: dark; color: var(--text); background: #000; font-size: 15px;
   -webkit-tap-highlight-color: transparent; -webkit-touch-callout: none; touch-action: manipulation; overscroll-behavior: none;
 }
@@ -671,13 +668,9 @@ body.web ::-webkit-scrollbar { width: 0; height: 0; }
 body.web #widget { inset: 0; border-radius: 0; border: 0; box-shadow: none; background: #000; animation: fadeOnly 0.3s ease both; }
 body.web #glass, body.web #aurora, body.web .grip, body.web #agent, body.web #reply, body.web .desk-only { display: none !important; }
 
-/* --- Escenario (el calendario). Con una hoja de página abierta se encoge y se redondea, como en iOS --- */
+/* --- Escenario (el calendario) --- */
 #stage { position: absolute; inset: 0; }
-body.web #stage {
-  background: var(--bg-web); overflow: hidden; transform-origin: 50% 0; will-change: transform;
-  transition: transform var(--dur-sheet) var(--ease-ios), border-radius 0s var(--dur-sheet);
-}
-body.web.pushed #stage { transform: translate3d(0, calc(var(--sheet-top) - 12px), 0) scale(0.92); border-radius: var(--r-xl); transition: transform var(--dur-sheet) var(--ease-ios), border-radius 0s; }
+body.web #stage { background: var(--bg-web); overflow: hidden; }
 
 /* --- Cabecera: mes a la izquierda, navegación a la derecha; botones de 44 px --- */
 body.web .head { -webkit-app-region: no-drag; height: calc(60px + var(--safe-t)); padding: var(--safe-t) 6px 0 var(--gutter); gap: 0; }
@@ -686,7 +679,7 @@ body.web .month .y { font-size: 17px; }
 body.web .nav { opacity: 1; transform: none; margin-left: auto; gap: 0; }
 body.web .ibtn { width: 44px; height: 44px; border-radius: var(--r-pill); transition: transform 0.25s var(--out), background 0.15s; }
 body.web .ibtn .ic { width: 20px; height: 20px; }
-body.web .ibtn:active { background: var(--press); transform: scale(0.9); transition-duration: 0.08s; }
+body.web .ibtn:active { background: var(--press); transform: scale(0.94); transition-duration: 0.08s; }
 body.web .ibtn.sm, body.web .task .x { width: 36px; height: 36px; }
 body.web .ibtn.sm .ic, body.web .task .x .ic { width: 16px; height: 16px; }
 
@@ -695,8 +688,8 @@ body.web .weekdays { top: calc(60px + var(--safe-t)); left: 6px; right: 6px; }
 body.web .weekdays div { font-size: 11px; padding-left: 7px; }
 body.web .cal { top: calc(80px + var(--safe-t)); left: 6px; right: 6px; bottom: calc(var(--dock-h) + var(--dock-b) + 10px); touch-action: none; contain: layout style; }
 body.web .weeks { will-change: transform; }
-body.web .weeks.l { animation: gridL 0.45s var(--ease-ios); }
-body.web .weeks.r { animation: gridR 0.45s var(--ease-ios); }
+body.web .weeks.nb { pointer-events: none; } /* meses vecinos del carrusel */
+
 body.web .week { contain: layout style; }
 body.web .dots { opacity: 0.6; }
 body.web .cell::before { inset: 3px; border-radius: var(--r-md); transition: opacity 0.2s ease; }
@@ -714,79 +707,99 @@ body.web .bar.armed { transform: scale(1.06); box-shadow: 0 6px 18px rgba(0, 0, 
 
 /* --- Dock: capa · ¿Cómo vas? · recordatorios, en la zona del pulgar --- */
 #dock { display: none; }
-body.web #dock { position: absolute; z-index: 30; left: 0; right: 0; bottom: 0; display: flex; align-items: center; gap: 10px; padding: 0 var(--gutter) var(--dock-b); pointer-events: none; }
+body.web #dock { position: absolute; z-index: 30; left: 0; right: 0; bottom: 0; display: flex; align-items: center; gap: 8px; padding: 0 var(--gutter) var(--dock-b); pointer-events: none; }
 body.web #dock > * { pointer-events: auto; }
 .dock-btn {
   height: var(--dock-h); border: 1px solid var(--line); background: var(--card); color: var(--text); border-radius: var(--r-pill); box-shadow: var(--shadow);
   display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 0 18px; cursor: pointer; font-size: 15px; font-weight: 600; white-space: nowrap; position: relative;
   transition: transform 0.25s var(--out), background 0.15s, color 0.2s;
 }
-.dock-btn:active { transform: scale(0.94); background: var(--soft); transition-duration: 0.08s; }
-body.web .layer-pill.dock-layer { margin: 0; height: var(--dock-h); min-width: 0; max-width: 42%; padding: 0 16px 0 14px; border-radius: var(--r-pill); color: var(--muted); background: var(--card); font-size: 15px; }
+.dock-btn:active { transform: scale(0.96); background: var(--soft); transition-duration: 0.08s; }
+body.web .layer-pill.dock-layer { flex: 0 1 auto; margin: 0; height: var(--dock-h); min-width: 0; padding: 0 12px 0 10px; gap: 6px; border-radius: var(--r-pill); color: var(--muted); background: var(--card); font-size: 15px; }
 body.web .layer-pill.dock-layer.on { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
 .dock-layer .ic, .dock-how .ic { width: 20px; height: 20px; flex: none; }
 .dock-layer span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-.dock-how { margin-left: auto; }
+.dock-how { margin-left: auto; padding: 0 14px; gap: 7px; min-width: 0; flex: none; }
 .dock-how .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft); animation: breathe 2s ease-in-out infinite; }
 .dock-how.fresh { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
-.dock-rm { width: var(--dock-h); padding: 0; }
+.dock-rm, .dock-ai { width: var(--dock-h); padding: 0; flex: none; }
+.dock-ai { background: var(--accent); border-color: transparent; color: #fff; box-shadow: 0 4px 16px rgba(217, 119, 87, 0.35); }
+.dock-ai:active { background: var(--accent-2); }
+.dock-ai .ic { width: 22px; height: 22px; }
 .dock-rm .ic { width: 22px; height: 22px; }
 .dock-rm .badge { top: -3px; right: -3px; min-width: 20px; height: 20px; line-height: 20px; font-size: 11px; border-radius: 10px; box-shadow: 0 0 0 2px var(--bg-web); }
 body.web .layer-menu { top: auto; right: auto; left: var(--gutter); bottom: calc(100% + 8px); min-width: 240px; max-height: 60vh; overflow-y: auto; padding: 6px; border-radius: var(--r-lg); transform-origin: bottom left; overscroll-behavior: contain; }
 body.web .layer-menu button { min-height: 44px; font-size: 16px; border-radius: var(--r-md); }
 body.web .layer-menu button:active { background: var(--press); }
 
-/* --- Oscurecido: fijo y a pantalla completa (también bajo el indicador de inicio) --- */
-#sheet-dim { position: fixed; inset: 0; z-index: 52; background: rgba(0, 0, 0, 0.45); opacity: 0; pointer-events: none; transition: opacity 0.4s var(--ease-ios); will-change: opacity; }
-#sheet-dim.on { opacity: 1; pointer-events: auto; }
-
-/* --- Hojas: inferior (se ajusta al contenido) y de página (vista de día) --- */
-body.web .card { z-index: 55; }
-body.web .card.sheet {
-  position: absolute; left: 0; right: 0; bottom: 0; top: auto; width: auto; height: auto; max-height: calc(100% - var(--sheet-top)); display: none; flex-direction: column;
-  border: 0; border-radius: var(--r-xl) var(--r-xl) 0 0; background: var(--card); padding-bottom: var(--safe-b); box-shadow: var(--sheet-shadow); overflow: visible;
+/* --- Páginas: cada vista ocupa la pantalla y es una entrada del historial (atrás = el del sistema) --- */
+body.web .card, body.web .how {
+  position: absolute; inset: 0; z-index: 55; top: 0; left: 0; width: auto; height: auto; display: none;
+  border: 0; border-radius: 0; box-shadow: none; background: var(--panel); opacity: 1; transform: none; animation: none; transition: none; cursor: default; overflow: hidden;
 }
-/* La hoja continúa por debajo de su borde: aunque algo la desplace, nunca se ve lo de detrás */
-body.web .card.sheet::after { content: ''; position: absolute; left: 0; right: 0; top: calc(100% - 1px); height: 100vh; background: inherit; pointer-events: none; }
-body.web .card.sheet.show { display: flex; }
-body.web .card.sheet.full { top: var(--sheet-top); max-height: none; background: var(--panel); }
-body.web .card.sheet .card-in { position: relative; inset: auto; width: auto; height: auto; flex: 1; min-height: 0; overflow-y: auto; padding: 0 var(--gutter) 28px; overscroll-behavior: contain; }
-.sheet-top { position: relative; height: 24px; flex: none; display: flex; align-items: center; justify-content: center; }
-.grabber { width: 36px; height: 5px; border-radius: 3px; background: var(--line-strong); }
-.sheet-back { position: absolute; left: 6px; top: 4px; display: none; }
-.card.has-back .sheet-back { display: grid; }
-body.web .card.sheet.has-back .sheet-top { height: 52px; }
-body.web .c-title { font-size: 24px; }
-body.web .c-meta { font-size: 13.5px; }
-body.web .c-head .ibtn { margin: -6px -10px 0 0; }
-body.web .c-actions { gap: 8px; margin-top: 16px; }
-body.web .c-foot { gap: 8px; margin-top: 16px; }
-body.web .c-foot .btn.danger { min-width: 44px; padding: 0 12px; }
-
-/* --- Panel «¿Cómo vas?» / Recordatorios / Ajustes: hoja de página que sube desde abajo --- */
-body.web .how {
-  position: absolute; z-index: 56; left: 0; right: 0; bottom: 0; top: var(--sheet-top); width: auto; height: auto;
-  border: 0; border-radius: var(--r-xl) var(--r-xl) 0 0; background: var(--panel); opacity: 1; box-shadow: var(--sheet-shadow); cursor: default; animation: none;
-  transform: translate3d(0, calc(100% + 60px), 0); visibility: hidden;
-  transition: transform var(--dur-sheet) var(--ease-ios), visibility 0s var(--dur-sheet);
-}
-body.web .how.open { transform: none; visibility: visible; transition: transform var(--dur-sheet) var(--ease-ios), visibility 0s; }
-body.web .how:not(.open) { pointer-events: none; } /* mientras se va, no se puede pulsar */
-body.web .how.open .how-body > * { animation: none; } /* ya sube la hoja entera: sin segundo movimiento */
-body.web .how::before { content: ''; position: absolute; z-index: 3; top: 6px; left: 50%; width: 36px; height: 5px; margin-left: -18px; border-radius: 3px; background: var(--line-strong); }
+body.web .card.page.show { display: flex; flex-direction: column; padding-top: var(--safe-t); }
+body.web .how.open { display: block; }
 body.web .how-btn { display: none; }
-body.web .how-body { left: 0; top: 0; transform: none; width: 100%; height: 100%; opacity: 1; transition: none; pointer-events: auto; padding: 20px var(--gutter) calc(var(--safe-b) + 40px); overscroll-behavior: contain; }
-/* Cabeceras: botones arriba y título grande debajo (barra de navegación de iOS) */
+body.web .how-body { left: 0; right: 0; top: var(--safe-t); bottom: 0; width: auto; height: auto; transform: none; opacity: 1; transition: none; pointer-events: auto; padding: 0 var(--gutter) calc(var(--safe-b) + 40px); overscroll-behavior: contain; }
+body.web .how.open .how-body > * { animation: none; }
+body.web .card.page .card-in { position: relative; inset: auto; width: auto; height: auto; flex: 1; min-height: 0; overflow-y: auto; padding: 0 var(--gutter) calc(var(--safe-b) + 32px); overscroll-behavior: contain; }
+/* Vista de día: el scroll vertical es del navegador; a los lados, el carrusel de días */
+body.web .card.day .card-in { touch-action: pan-y; }
+body.web .card .card-in.nb { pointer-events: none; }
+/* Barra de navegación: «‹ Atrás» con el nombre de la pantalla anterior */
+.page-bar { flex: none; height: 48px; display: flex; align-items: center; padding: 0 var(--gutter); }
+.page-back { display: inline-flex; align-items: center; height: 44px; max-width: 75%; padding: 0 12px 0 0; margin-left: -8px; border: 0; background: none; color: var(--accent); font-size: 17px; cursor: pointer; border-radius: var(--r-pill); transition: opacity 0.15s; }
+.page-back span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.page-back:active { opacity: 0.45; transition-duration: 0s; }
+body.web .card [data-act="close-card"], body.web .how [data-act="how-close"] { display: none; } /* se vuelve con «Atrás» */
+/* Cabeceras de los paneles: barra con «Atrás» arriba y título grande debajo (como iOS) */
 body.web .how-top { flex-direction: column-reverse; align-items: stretch; gap: 2px; }
-body.web .how-top > div:last-child { justify-content: flex-end; margin-right: -10px; }
+body.web .how-top > div:last-child { justify-content: flex-end; align-items: center; min-height: 48px; margin-right: -10px; }
+body.web .how-top > div:last-child .page-back { margin-right: auto; }
 body.web .greet { font-size: 32px; }
 body.web .how-top.hh { display: grid; grid-template-columns: auto 1fr auto; grid-template-areas: 'back . close' 'title title title' 'tabs tabs tabs'; gap: 2px 0; }
 body.web .hh > div { display: contents !important; }
-body.web .hh [data-v="summary"] { grid-area: back; margin-left: -10px; }
+body.web .hh .page-back { grid-area: back; height: 48px; max-width: none; }
 body.web .hh .greet { grid-area: title; font-size: 32px !important; }
 body.web .hh .seg { grid-area: tabs; display: flex; margin-top: 10px; }
 body.web .hh .seg button { flex: 1; justify-content: center; }
-body.web .hh [data-act="how-close"] { grid-area: close; margin-right: -10px; }
+body.web .rm-top { min-height: 48px; margin-right: -10px; }
+/* Claude: se escribe aquí y se abre Claude con el mensaje */
+.ai-intro { margin: 6px 0 14px; line-height: 1.5; }
+.ai-box { display: grid; gap: 10px; }
+.ai-box textarea { min-height: 112px; }
+.ai-box .btn { justify-self: end; }
+.ai-chips { margin: 14px 0 22px; gap: 8px; }
+.ai-chips .pchip::before { display: none; }
+
+/* --- Cambio de pantalla: lo anima el navegador (View Transitions) como el «push» de iOS: entra por la derecha --- */
+html[data-nav='push']::view-transition-old(root), html[data-nav='push']::view-transition-new(root),
+html[data-nav='pop']::view-transition-old(root), html[data-nav='pop']::view-transition-new(root) { animation-duration: 0.42s; animation-timing-function: cubic-bezier(0.32, 0.72, 0, 1); mix-blend-mode: normal; }
+html[data-nav='push']::view-transition-new(root) { animation-name: vt-from-right; box-shadow: -8px 0 28px rgba(0, 0, 0, 0.35); }
+html[data-nav='push']::view-transition-old(root) { animation-name: vt-to-left; }
+html[data-nav='pop']::view-transition-old(root) { animation-name: vt-to-right; z-index: 1; box-shadow: -8px 0 28px rgba(0, 0, 0, 0.35); }
+html[data-nav='pop']::view-transition-new(root) { animation-name: vt-from-left; }
+html[data-nav='fade']::view-transition-old(root), html[data-nav='fade']::view-transition-new(root) { animation-duration: 0.18s; }
+@keyframes vt-from-right { from { transform: translateX(100%); } }
+@keyframes vt-to-left { to { transform: translateX(-28%); opacity: 0.7; } }
+@keyframes vt-to-right { to { transform: translateX(100%); } }
+@keyframes vt-from-left { from { transform: translateX(-28%); opacity: 0.7; } }
+
+/* --- Movimiento sobrio: nada de rebotes ni escalados grandes en el móvil --- */
+body.web .task.pop .check, body.web .goal-check.pop .check, body.web .rm-row.pop .rm-check { animation: popSoft 0.3s var(--out); }
+@keyframes popSoft { 50% { transform: scale(1.12); } }
+body.web .morph-in, body.web .bar.morph-in, body.web .rm-detail { animation: fadeOnly 0.22s ease both; }
+body.web .weeks.anim .bar { animation: fadeOnly 0.3s ease backwards; animation-delay: calc(var(--i, 0) * 8ms); }
+body.web .weeks.l, body.web .weeks.r, body.web .month .n.l, body.web .month .n.r { animation: fadeOnly 0.22s ease; }
+body.web .cell.today .num { animation: none; }
+body.web .toast { animation: toastSoft 0.3s var(--ease-ios) both; }
+body.web .toast.out { animation: toastOut 0.2s ease-in both; }
+@keyframes toastSoft { from { opacity: 0; transform: translateY(-8px); } }
+body.web .ctx, body.web .layer-menu { animation: menuSoft 0.18s var(--out) both; }
+body.web .ctx-item { animation: none; }
+@keyframes menuSoft { from { opacity: 0; transform: scale(0.97); } }
+body.web .seg button:active { transform: scale(0.97); }
+body.web .rm-tile:active { transform: scale(0.97); }
 body.web .rm-top { margin-right: -10px; }
 body.web .sec { background: var(--card); border-radius: var(--r-lg); padding: 16px; }
 body.web .sub { font-size: 14px; }
@@ -872,14 +885,14 @@ body.web .ctx-item .k { display: none; } /* atajos de teclado: no aplican al ded
 .arow.done .at span { color: var(--muted); text-decoration: line-through; }
 .acheck { width: 32px; height: 32px; border-radius: 50%; border: 2px solid var(--c); background: transparent; color: transparent; display: grid; place-items: center; flex: none; cursor: pointer; transition: background 0.2s, color 0.2s, transform 0.4s var(--spring); }
 .acheck.on, .arow.done .acheck { background: var(--c); color: #fff; }
-.acheck:active { transform: scale(0.82); }
+.acheck:active { transform: scale(0.92); }
 .df-empty { color: var(--muted); text-align: center; padding: 34px 0; font-size: 16px; }
 .df-st { margin-top: 16px; width: 100%; }
 .df-st button { flex: 1; justify-content: center; font-size: 14px; }
 .df-add { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 16px; }
 .df-add button { border: 0; background: var(--soft); color: var(--text); border-radius: var(--r-lg); min-height: 72px; padding: 12px 4px 10px; display: grid; justify-items: center; align-content: center; gap: 6px; font-size: 12px; cursor: pointer; transition: transform 0.25s var(--out), background 0.15s; }
 .df-add button .ic { color: var(--accent); }
-.df-add button:active { transform: scale(0.94); background: var(--press); transition-duration: 0.08s; }
+.df-add button:active { transform: scale(0.97); background: var(--press); transition-duration: 0.08s; }
 .df-hint { color: var(--faint); font-size: 12px; text-align: center; margin-top: 18px; }
 
 /* --- Recordatorios --- */
@@ -913,6 +926,58 @@ body.web .rm-bar .sp { flex: 1; background: none; }
 /* --- Entrada --- */
 body.web #login { position: fixed; padding: 20px var(--gutter); background: var(--bg-web); backdrop-filter: none; }
 body.web .login-card { border-radius: var(--r-xl); padding: 28px 22px; }
+
+/* ================= Tiempo bloqueado (rayado) ================= */
+.bar.blocking, .wk-it.blocking, .wk-chip.blocking { background-image: repeating-linear-gradient(-45deg, rgba(255, 255, 255, 0.22) 0 3px, transparent 3px 7px); }
+.bar.ext.blocking { background-color: color-mix(in srgb, var(--c) 70%, var(--panel)); color: #fff; }
+.cell.blocked::before { opacity: 1; background: repeating-linear-gradient(-45deg, color-mix(in srgb, var(--text) 9%, transparent) 0 3px, transparent 3px 8px); }
+.tag.blocking-tag { --c: var(--muted); }
+
+/* ================= Vista semanal ================= */
+.weeks.wkview { display: block; }
+body.view-week .weekdays, body.view-week .dots { display: none; }
+body.view-week .cal { top: 62px; }
+body.web.view-week .cal { top: calc(68px + env(safe-area-inset-top)); touch-action: pan-y; }
+.wk { position: absolute; inset: 0; display: flex; flex-direction: column; }
+.wk-row { display: grid; grid-template-columns: 30px repeat(7, 1fr); flex: none; }
+.wk-dh { border: 0; background: none; color: var(--muted); display: flex; flex-direction: column; align-items: center; gap: 1px; padding: 2px 0 6px; cursor: pointer; border-radius: 12px; transition: background 0.2s, transform 0.4s var(--spring); }
+.wk-dh:hover { background: var(--hover); }
+.wk-dh:active { transform: scale(0.94); }
+.wk-dh .wd { font-size: 10px; letter-spacing: 0.1em; font-weight: 600; }
+.wk-dh .dn { font-size: 17px; font-weight: 600; color: var(--text); width: 30px; height: 30px; display: grid; place-items: center; border-radius: 50%; font-variant-numeric: tabular-nums; }
+.wk-dh.we .dn { color: var(--muted); }
+.wk-dh.today .dn { background: var(--accent); color: #fff; box-shadow: 0 2px 10px rgba(217, 119, 87, 0.45); }
+.wk-allday { padding-bottom: 6px; border-bottom: 1px solid var(--line); }
+.wk-ad { display: flex; flex-direction: column; gap: 3px; padding: 0 2px; min-width: 0; }
+.wk-chip { height: 18px; line-height: 18px; border-radius: 6px; padding: 0 5px; font-size: 10.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; background: var(--c); color: var(--ink, #fff); cursor: pointer; display: flex; align-items: center; gap: 3px; }
+.wk-chip.ext { background: color-mix(in srgb, var(--c) 22%, transparent); color: var(--text); }
+.wk-chip.goal, .wk-chip.todo { background: color-mix(in srgb, var(--c) 14%, transparent); color: color-mix(in srgb, var(--c) 75%, var(--text)); box-shadow: inset 0 0 0 1.2px color-mix(in srgb, var(--c) 60%, transparent); }
+.wk-chip.done { opacity: 0.45; }
+.wk-more { font-size: 10px; color: var(--muted); padding-left: 4px; }
+.wk-body { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; }
+.wk-grid { position: relative; display: grid; grid-template-columns: 30px repeat(7, 1fr); }
+.wk-hours { position: relative; }
+.wk-hours span { position: absolute; right: 6px; transform: translateY(-50%); font-size: 10px; color: var(--faint); font-variant-numeric: tabular-nums; }
+.wk-hours span:first-child { transform: none; }
+.wk-col { position: relative; border-left: 1px solid var(--line); background-image: linear-gradient(to bottom, var(--line) 1px, transparent 1px); background-size: 100% calc(60px * var(--ppm, 1)); cursor: copy; }
+.wk-col.today { background-color: color-mix(in srgb, var(--accent) 5%, transparent); }
+.wk-col.blocked { background-image: repeating-linear-gradient(-45deg, color-mix(in srgb, var(--text) 8%, transparent) 0 3px, transparent 3px 8px); cursor: not-allowed; }
+.wk-it { position: absolute; padding: 3px 5px; border-radius: 7px; background: color-mix(in srgb, var(--c) 86%, var(--panel)); color: var(--ink, #fff); font-size: 10.5px; line-height: 1.25; overflow: hidden; cursor: pointer; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12); border: 1px solid color-mix(in srgb, var(--c) 40%, transparent); transition: transform 0.4s var(--out), box-shadow 0.3s, filter 0.3s; margin: 0 1px; }
+.wk-it:hover { transform: translateY(-1px); box-shadow: 0 4px 12px color-mix(in srgb, var(--c) 30%, transparent); z-index: 2; filter: brightness(1.05); }
+.wk-it b { display: block; font-weight: 700; font-size: 9.5px; opacity: 0.85; font-variant-numeric: tabular-nums; }
+.wk-it span { display: flex; gap: 3px; align-items: flex-start; font-weight: 600; overflow-wrap: anywhere; }
+.wk-it.thin { display: flex; gap: 4px; align-items: center; white-space: nowrap; padding: 1px 5px; }
+.wk-it.thin b { display: inline; }
+.wk-it.thin span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wk-it.ext { background: color-mix(in srgb, var(--c) 24%, var(--panel)); color: var(--text); }
+.wk-it.goal, .wk-it.todo { background: color-mix(in srgb, var(--c) 16%, var(--panel)); color: var(--text); border-style: dashed; }
+.wk-it.done { opacity: 0.5; }
+.wk-it.blocking { background-color: color-mix(in srgb, var(--c) 55%, var(--panel)); color: #fff; }
+.wk-now { position: absolute; left: -1px; right: 0; height: 2px; background: var(--accent); z-index: 3; pointer-events: none; }
+.wk-now::before { content: ''; position: absolute; left: -4px; top: -3px; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
+.weeks.wkview.anim .wk-it { animation: barIn 0.5s var(--out) backwards; }
+body.web .wk-dh .dn { font-size: 16px; width: 28px; height: 28px; }
+body.web .wk-it { font-size: 10px; padding: 2px 3px; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
