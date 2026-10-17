@@ -215,10 +215,24 @@ function renderHead() {
       <button class="ibtn" data-act="month" data-d="1" title="Mes siguiente">${icon('chevR', 16)}</button>
       ${ui.month !== S.today.slice(0, 8) + '01' ? `<button class="ibtn" data-act="today" title="Volver a hoy">${icon('cal', 15)}</button>` : ''}
     </div>
-    <button class="layer-pill ${activeLayer() ? 'on' : ''}" data-act="layer-menu" title="Capas">${icon('layers', 13)} ${esc(activeLayer()?.name || 'Todo')}</button>
+    ${S.web ? '' : `<button class="layer-pill ${activeLayer() ? 'on' : ''}" data-act="layer-menu" title="Capas">${icon('layers', 13)} ${esc(activeLayer()?.name || 'Todo')}</button>
     <button class="ibtn rm-go" data-act="rm-go" title="Recordatorios (R)">${icon('checklist', 15)}${rmCount().today ? `<span class="badge">${rmCount().today}</span>` : ''}</button>
-    ${ui.layerMenu ? layerMenu() : ''}`);
+    ${ui.layerMenu ? layerMenu() : ''}`}`);
   $('#weekdays').innerHTML = ['L', 'M', 'X', 'J', 'V', 'S', 'D'].map((d) => `<div>${d}</div>`).join('');
+  if (S.web) renderDock();
+}
+// Móvil: capa y recordatorios abajo, a los lados de «¿Cómo vas?», al alcance del pulgar
+function renderDock() {
+  let el = $('#dock');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'dock';
+    $('#widget').appendChild(el);
+  }
+  const n = rmCount().today;
+  morph(el, `<button class="layer-pill dock-layer ${activeLayer() ? 'on' : ''}" data-act="layer-menu" data-key="dock-layer" title="Capas">${icon('layers', 20)}<span>${esc(activeLayer()?.name || 'Todo')}</span></button>
+    <button class="dock-rm" data-act="rm-go" data-key="dock-rm" title="Recordatorios">${icon('checklist', 22)}${n ? `<span class="badge">${n}</span>` : ''}</button>
+    ${ui.layerMenu ? layerMenu() : ''}`);
 }
 
 const paletteRow = (id, current, kind) => `<div class="palette" data-key="pal-${id}">${PALETTE.map((c, i) => `<button class="${c === current ? 'on' : ''}" style="--c:${c};--n:${i}" data-act="set-color" data-kind="${kind}" data-id="${id}" data-c="${c}"></button>`).join('')}</div>`;
@@ -283,7 +297,7 @@ function renderCal(dir = 0, slide = true) {
       const key = `${it.kind}-${it.id}-${w}`;
       const style = `left:calc(${(it.s / 7) * 100}% + 3px);width:calc(${((it.e - it.s + 1) / 7) * 100}% - 6px);top:${G.top + it.lane * G.step}px;--c:${p.color};--ink:${ink(p.color)};--i:${n++}`;
       if (it.kind === 'ext') {
-        bars += `<div class="bar ext ${it.cl ? 'cl' : ''} ${it.cr ? 'cr' : ''}" data-act="open" data-type="ext" data-id="${esc(it.id)}" data-key="${esc(key)}" style="${style}" title="${esc(it.x.title)}">${it.x.start && !it.cl ? it.x.start + ' ' : ''}${esc(it.x.title)}</div>`;
+        bars += `<div class="bar ext ${it.cl ? 'cl' : ''} ${it.cr ? 'cr' : ''}" data-act="open" data-type="ext" data-id="${esc(it.id)}" data-key="${esc(key)}" style="${style}" title="${esc(it.x.title)}">${it.x.start && !it.cl && !S.web ? it.x.start + ' ' : ''}${esc(it.x.title)}</div>`;
       } else if (it.kind === 'goal') {
         bars += `<div class="bar goal ${it.x.done ? 'done' : ''}" data-act="open" data-type="goal" data-id="${it.id}" data-key="${key}" style="${style}" title="${esc(it.x.title)}">${icon(it.x.done ? 'check' : 'target', 11)}<span>${esc(it.x.title)}</span></div>`;
       } else if (it.kind === 'ms') {

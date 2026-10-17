@@ -688,6 +688,21 @@ body.web .list-row, body.web .task { min-height: 44px; }
 body.web .task .x { opacity: 1; }
 body.web .toast { background: #2a2a27; color: #fff; }
 @keyframes sheetUp { from { transform: translateY(100%); } }
+/* Abajo: capa · ¿Cómo vas? · recordatorios */
+#dock { display: none; }
+body.web #dock { display: block; }
+body.web .how:not(.open) { width: 150px; left: auto; right: 68px; transform: none; }
+body.web .how:not(.open):active { transform: scale(0.95); }
+.dock-layer, .dock-rm { position: absolute; z-index: 30; bottom: calc(18px + env(safe-area-inset-bottom)); height: 48px; border: 1px solid var(--line); background: var(--card); box-shadow: var(--shadow); color: var(--text); cursor: pointer; transition: transform 0.4s var(--spring), color 0.2s; }
+.dock-layer:active, .dock-rm:active { transform: scale(0.92); transition-duration: 0.08s; }
+body.web .layer-pill.dock-layer { left: 12px; margin: 0; max-width: calc(100% - 246px); height: 48px; border-radius: 24px; padding: 0 14px 0 13px; gap: 7px; font-size: 13.5px; color: var(--muted); background: var(--card); }
+.dock-layer span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+body.web .layer-pill.dock-layer.on { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
+body.web .layer-pill.dock-layer .ic { width: 20px; height: 20px; flex: none; }
+.dock-rm { right: 12px; width: 48px; border-radius: 50%; display: grid; place-items: center; }
+.dock-rm .badge { top: -2px; right: -2px; min-width: 19px; height: 19px; line-height: 19px; font-size: 11px; border-radius: 10px; }
+body.web .layer-menu { top: auto; right: auto; left: 12px; bottom: calc(76px + env(safe-area-inset-bottom)); transform-origin: bottom left; max-height: 60vh; overflow-y: auto; }
+
 /* Hojas desde abajo; un día ocupa la pantalla entera */
 #sheet-dim { position: absolute; inset: 0; z-index: 52; background: rgba(0, 0, 0, 0.55); opacity: 0; pointer-events: none; transition: opacity 0.3s; }
 #sheet-dim.on { opacity: 1; pointer-events: auto; }
