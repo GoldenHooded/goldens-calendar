@@ -45,7 +45,16 @@ const ui = {
   layerMenu: false,
 };
 // Capas: qué se ve en el calendario
-const activeLayer = () => (ui.layer !== 'all' && S ? byId(S.db.layers || [], ui.layer) : null);
+// Capas elegidas: 'all', un id o varios ids separados por comas. Con varias, se ve lo de cualquiera de ellas.
+const selLayers = () => (ui.layer === 'all' ? [] : ui.layer.split(',').filter((id) => byId(S?.db.layers || [], id)));
+function activeLayer() {
+  if (!S || ui.layer === 'all') return null;
+  const ls = selLayers().map((id) => byId(S.db.layers, id));
+  if (!ls.length) return null;
+  if (ls.length === 1) return ls[0];
+  const all = (k) => [...new Set(ls.flatMap((l) => l[k] || []))];
+  return { id: ui.layer, name: ls.map((l) => l.name).join(' + '), projectIds: all('projectIds'), categoryIds: all('categoryIds'), subscriptionIds: all('subscriptionIds'), includeLoose: ls.some((l) => l.includeLoose), multi: ls.length };
+}
 function inLayer(kind, x) {
   const l = activeLayer();
   if (!l) return true;
@@ -232,6 +241,7 @@ function renderHead() {
       <button class="ibtn view-btn" data-act="toggle-view" title="${ui.view === 'week' ? 'Ver el mes (W)' : 'Ver la semana (W)'}">${icon(ui.view === 'week' ? 'gridMonth' : 'columns', 15)}</button>
     </div>
     ${S.web ? '' : `${layerWheel()}
+    <kbd class="esc-hint" title="Escape cierra">esc</kbd>
     <button class="ibtn rm-go" data-act="rm-go" title="Recordatorios (R)">${icon('checklist', 15)}${rmCount().today ? `<span class="badge">${rmCount().today}</span>` : ''}</button>
     ${ui.layerMenu ? layerMenu() : ''}`}`);
   $('#weekdays').innerHTML = ['L', 'M', 'X', 'J', 'V', 'S', 'D'].map((d) => `<div>${d}</div>`).join('');
@@ -255,7 +265,11 @@ function renderDock() {
 
 // Botón de capas: la rueda del ratón gira entre capas (el nombre rueda y el botón cambia de ancho sin saltos)
 const layerOrder = () => ['all', ...(S.db.layers || []).map((l) => l.id)];
-const layerName = (id) => (id === 'all' ? 'Todo' : byId(S.db.layers || [], id)?.name || 'Todo');
+const layerName = (id) => {
+  if (id === 'all') return 'Todo';
+  const names = id.split(',').map((x) => byId(S.db.layers || [], x)?.name).filter(Boolean);
+  return !names.length ? 'Todo' : names.length === 1 ? names[0] : names.join(' + ').length > 24 ? `${names.length} capas` : names.join(' + ');
+};
 function layerWheel() {
   return `<div class="layer-wheel" data-key="lwheel" title="Capas · gira la rueda del ratón para cambiar">
     <button class="layer-pill ${activeLayer() ? 'on' : ''}" data-act="layer-menu">${icon('layers', 13)} <span class="lp-name"><span class="lp-t">${esc(layerName(ui.layer))}</span></span></button></div>`;
@@ -312,9 +326,12 @@ const paletteRow = (id, current, kind) => `<div class="palette" data-key="pal-${
 
 function layerMenu() {
   const count = (l) => l.projectIds.length + (l.categoryIds || []).length + l.subscriptionIds.length;
-  return `<div class="layer-menu">
-    <button class="${ui.layer === 'all' ? 'on' : ''}" data-act="set-layer" data-id="all">${icon('layers', 14)} Todo</button>
-    ${(S.db.layers || []).map((l) => `<button class="${ui.layer === l.id ? 'on' : ''}" data-act="set-layer" data-id="${l.id}">${icon('layers', 14)} ${esc(l.name)}<span class="n">${count(l)}</span></button>`).join('')}
+  const sel = selLayers();
+  const tick = (on) => (S.web ? `<span class="tick ${on ? 'on' : ''}">${icon('check', 12)}</span>` : icon('layers', 14));
+  return `<div class="layer-menu ${S.web ? 'ticks' : ''}" data-key="layer-menu">
+    <button class="${!sel.length ? 'on' : ''}" data-act="set-layer" data-id="all" data-key="lm-all">${tick(!sel.length)} Todo</button>
+    ${(S.db.layers || []).map((l) => `<button class="${sel.includes(l.id) ? 'on' : ''}" data-act="set-layer" data-id="${l.id}" data-key="lm-${l.id}">${tick(sel.includes(l.id))} ${esc(l.name)}<span class="n">${count(l)}</span></button>`).join('')}
+    ${!S.web && (S.db.layers || []).length > 1 ? '<div class="lm-hint">Ctrl o Mayús + clic para ver varias a la vez</div>' : ''}
     <hr><button data-act="manage-layers">${icon('gear', 14)} Gestionar capas y calendarios…</button></div>`;
 }
 
@@ -381,7 +398,7 @@ const mondayOf = (d) => addDays(d, -((parse(d).getDay() + 6) % 7));
 const subBlocking = (id) => !!byId(S.db.subscriptions || [], id)?.blocking;
 // Días con un bloqueo de día entero (rayados en el mes)
 function allDayBlocked(d) {
-  return S.db.blocks.some((b) => b.blocking && !b.start && b.date <= d && blockEnd(b) >= d) || (S.db.extEvents || []).some((e) => !e.start && subBlocking(e.subId) && e.date <= d && (e.endDate || e.date) >= d);
+  return S.db.blocks.some((b) => b.blocking && !b.start && b.date <= d && blockEnd(b) >= d) || (S.db.goals || []).some((g) => g.blocking && !g.time && g.date === d) || S.db.milestones.some((m) => m.blocking && !m.time && m.date === d) || (S.db.extEvents || []).some((e) => !e.start && subBlocking(e.subId) && e.date <= d && (e.endDate || e.date) >= d);
 }
 function weekViewHTML() {
   const ws = ui.weekStart;
@@ -399,8 +416,8 @@ function weekViewHTML() {
     if (!(blocking || inLayer('ext', e))) continue;
     for (const d of days) if (e.date <= d && (e.endDate || e.date) >= d) put(d, { type: 'ext', id: e.id, title: e.title.trim(), color: subColor(e.subId), from: minsOf(e.start), to: e.end ? minsOf(e.end) : minsOf(e.start) + 60, blocking });
   }
-  for (const m of S.db.milestones) if (timed[m.date] && inLayer('ms', m)) put(m.date, { type: 'ms', id: m.id, title: m.title, color: proj(m.projectId).color, from: minsOf(m.time), to: minsOf(m.time) + 60, icon: KIND_ICON[m.kind] });
-  for (const g of S.db.goals || []) if (timed[g.date] && inLayer('goal', g)) put(g.date, { type: 'goal', id: g.id, title: g.title, color: goalColor(g), from: minsOf(g.time), to: minsOf(g.time) + 30, icon: 'target', done: g.done });
+  for (const m of S.db.milestones) if (timed[m.date] && inLayer('ms', m)) put(m.date, { type: 'ms', id: m.id, title: m.title, color: proj(m.projectId).color, from: minsOf(m.time), to: minsOf(m.time) + (m.blocking ? 120 : 60), icon: KIND_ICON[m.kind], blocking: m.blocking });
+  for (const g of S.db.goals || []) if (timed[g.date] && inLayer('goal', g)) put(g.date, { type: 'goal', id: g.id, title: g.title, color: goalColor(g), from: minsOf(g.time), to: minsOf(g.time) + (g.blocking ? 60 : 30), icon: 'target', done: g.done, blocking: g.blocking });
   for (const t of rmAll()) if (timed[t.due] && !t.done) put(t.due, { type: 'todo', id: t.id, title: t.title, color: rmColor(t), from: minsOf(t.time), to: minsOf(t.time) + 30, icon: 'checklist' });
   // Horas visibles: de 8 a 21, ampliando si hay algo antes o después
   let h0 = 8 * 60, h1 = 21 * 60;
@@ -540,9 +557,9 @@ function weeksHTML() {
       if (it.kind === 'ext') {
         bars += `<div class="bar ext ${subBlocking(it.x.subId) ? 'blocking' : ''} ${it.cl ? 'cl' : ''} ${it.cr ? 'cr' : ''}" data-act="open" data-type="ext" data-id="${esc(it.id)}" data-key="${esc(key)}" style="${style}" title="${esc(it.x.title)}">${it.x.start && !it.cl && !S.web ? it.x.start + ' ' : ''}${esc(it.x.title)}</div>`;
       } else if (it.kind === 'goal') {
-        bars += `<div class="bar goal ${it.x.done ? 'done' : ''}" data-act="open" data-type="goal" data-id="${it.id}" data-key="${key}" style="${style}" title="${esc(it.x.title)}">${icon(it.x.done ? 'check' : 'target', 11)}<span>${esc(it.x.title)}</span></div>`;
+        bars += `<div class="bar goal ${it.x.blocking ? 'blocking' : ''} ${it.x.done ? 'done' : ''}" data-act="open" data-type="goal" data-id="${it.id}" data-key="${key}" style="${style}" title="${esc(it.x.title)}">${icon(it.x.done ? 'check' : 'target', 11)}<span>${esc(it.x.title)}</span></div>`;
       } else if (it.kind === 'ms') {
-        bars += `<div class="bar ms" data-act="open" data-type="ms" data-id="${it.id}" data-key="${key}" style="${style}" title="${esc(it.x.title)} · ${projLabel(it.x.projectId, it.x.categoryId)}">${icon(KIND_ICON[it.x.kind] || 'flag', 11)}<span>${esc(it.x.title)}</span></div>`;
+        bars += `<div class="bar ms ${it.x.blocking ? 'blocking' : ''}" data-act="open" data-type="ms" data-id="${it.id}" data-key="${key}" style="${style}" title="${esc(it.x.title)} · ${projLabel(it.x.projectId, it.x.categoryId)}">${icon(KIND_ICON[it.x.kind] || 'flag', 11)}<span>${esc(it.x.title)}</span></div>`;
       } else {
         const st = S.stats.blocks[it.id];
         bars += `<div class="bar blk ${it.x.blocking ? 'blocking' : ''} ${st.pct === 100 ? 'done' : ''} ${it.cl ? 'cl' : ''} ${it.cr ? 'cr' : ''}" data-block="${it.id}" data-act="open" data-type="block" data-id="${it.id}" data-key="${key}" style="${style}" title="${esc(it.x.title)} · ${projLabel(it.x.projectId, it.x.categoryId)}">${esc(it.x.title)}</div>`;
@@ -701,6 +718,7 @@ function formGoal({ id, date }) {
     <label class="field"><span>Proyecto</span><select class="input" name="goalProject">${opts}</select></label>
     ${catField(g?.projectId, g?.categoryId)}
     <label class="field"><span>Notas</span><textarea class="input" name="notes" rows="2">${esc(g?.notes || '')}</textarea></label>
+    <label class="toggle"><div>Tiempo bloqueado<small>Con hora ocupa 1 h; sin hora, el día entero. Se ve en todas las capas</small></div><input type="checkbox" name="blocking" ${g?.blocking ? 'checked' : ''}><span class="switch"></span></label>
     ${formFoot(g ? 'Guardar' : 'Crear objetivo')}</form>`;
 }
 
@@ -766,6 +784,7 @@ function formMilestone({ id, date }) {
     <label class="field"><span>Título</span><input class="input" name="title" required autofocus value="${esc(m?.title || '')}" placeholder="Parcial 1, Entrega práctica…"></label>
     <div class="row2"><label class="field"><span>Fecha</span><input class="input" type="date" name="date" required value="${m?.date || date || addDays(S.today, 14)}"></label>
       <label class="field"><span>Hora</span><input class="input" type="time" name="time" value="${m?.time || ''}"></label></div>
+    <label class="toggle"><div>Tiempo bloqueado<small>Con hora ocupa 2 h; sin hora, el día entero. Se ve en todas las capas</small></div><input type="checkbox" name="blocking" ${m?.blocking ? 'checked' : ''}><span class="switch"></span></label>
     ${m ? '' : `<label class="field"><span>Temas (uno por línea, opcional)</span><textarea class="input" name="topics" rows="3" placeholder="Tema 1 · Cinemática&#10;Tema 2 · Dinámica"></textarea></label>`}
     ${formFoot(m ? 'Guardar' : 'Crear')}</form>`;
 }
@@ -1867,7 +1886,7 @@ function howSettings() {
             ${S.account.ok ? '' : `<button class="btn primary" data-act="login" style="flex:none">Iniciar sesión</button>`}<button class="ibtn" data-act="check-account" title="Comprobar">${icon('redo', 13)}</button></div>
           <label class="field"><span>Modelo</span><input class="input" data-setting-text="model" value="${esc(s.model)}"></label>
           <div class="field"><span>Memoria${memCache ? ` · ${memCache.memories.length} recuerdos` : ''}</span>
-          ${memCache ? memCache.memories.slice(0, 12).map((m) => `<div class="mem" data-key="mem-${m.id}"><div class="grow">${esc(m.text)}</div><div class="str">${prog('mem-' + m.id, m.strength, 'var(--accent)')}</div><button class="ibtn" data-act="forget" data-id="${m.id}" title="Olvidar" style="width:22px;height:22px">${icon('x', 12)}</button></div>`).join('') || '<div class="hint">Todavía no recuerda nada. Irá aprendiendo de lo que haces y le pides.</div>' : '<div class="hint">Cargando…</div>'}</div>`, 'desk-only')}
+          ${memCache ? memCache.memories.slice(0, 16).map((m) => `<div class="mem ${m.core ? 'core' : ''}" data-key="mem-${m.id}"><div class="grow">${m.kind === 'norma' ? '<span class="mem-k">Norma</span>' : ''}${esc(m.text)}</div>${m.core ? '' : `<div class="str">${prog('mem-' + m.id, m.strength, 'var(--accent)')}</div>`}${m.kind === 'norma' ? '' : `<button class="ibtn ${m.pinned ? 'on' : ''}" data-act="pin-mem" data-id="${m.id}" data-on="${m.pinned ? '' : '1'}" title="${m.pinned ? 'Dejar de fijar' : 'Fijar: lo recordará siempre, con máxima fuerza'}" style="width:22px;height:22px">${icon('pin', 12)}</button>`}<button class="ibtn" data-act="forget" data-id="${m.id}" title="Olvidar" style="width:22px;height:22px">${icon('x', 12)}</button></div>`).join('') || '<div class="hint">Todavía no recuerda nada. Irá aprendiendo de lo que haces y le pides.</div>' : '<div class="hint">Cargando…</div>'}</div>`, 'desk-only')}
         ${sec('sec-mcp', 'copy', 'Conectar con Claude', 'Para que Claude (la app) pueda leer y organizar tu calendario.', `
           <div class="c-actions" style="margin-top:0"><button class="btn" data-act="copy-mcp">${icon('copy', 13)} Copiar config MCP</button><button class="btn" data-act="install-skill">${icon('spark', 13)} Instalar skill</button></div>
           <div class="sub" style="font-size:11px;margin-top:12px;overflow-wrap:anywhere">Datos: ${esc(S.dataFile)}</div>`, 'desk-only')}
@@ -2189,7 +2208,7 @@ function hideReply() {
   $('#reply').classList.remove('show');
 }
 function agentContext() {
-  const parts = [`Está viendo ${MONTHS[parse(ui.month).getMonth()]} ${ui.month.slice(0, 4)}${activeLayer() ? ` en la capa «${activeLayer().name}» (id ${ui.layer})` : ''}.`];
+  const parts = [`Está viendo ${MONTHS[parse(ui.month).getMonth()]} ${ui.month.slice(0, 4)}${activeLayer() ? ` en ${activeLayer().multi ? 'las capas' : 'la capa'} «${activeLayer().name}» (id ${ui.layer})` : ''}.`];
   const c = ui.card;
   if (c?.type === 'block') { const b = byId(S.db.blocks, c.id); if (b) parts.push(`Tiene abierto el bloque «${b.title}» (id ${b.id}, ${b.date}).`); }
   if (c?.type === 'ms') { const m = byId(S.db.milestones, c.id); if (m) parts.push(`Tiene abierto ${ART[m.kind]} «${m.title}» (id ${m.id}, ${m.date}).`); }
@@ -2353,8 +2372,18 @@ const actions = {
     }, 200);
   },
   'layer-menu': (_el, e) => { e.stopPropagation(); ui.layerMenu = !ui.layerMenu; renderHead(); },
-  'set-layer': (el) => {
+  'set-layer': (el, e) => {
     const ids = layerOrder();
+    // Varias a la vez: en el móvil cada toque marca o desmarca; en el PC, con Ctrl o Mayús
+    if (el.dataset.id !== 'all' && el.closest?.('.layer-menu') && (S.web || e?.ctrlKey || e?.shiftKey || e?.metaKey)) {
+      const cur = selLayers();
+      const next = cur.includes(el.dataset.id) ? cur.filter((x) => x !== el.dataset.id) : [...cur, el.dataset.id];
+      ui.layer = next.length ? next.join(',') : 'all';
+      localStorage.setItem('layer', ui.layer);
+      e?.stopPropagation?.();
+      renderHead(); // el menú sigue abierto
+      return renderCal();
+    }
     if (S.web) { ui.layer = el.dataset.id; ui.layerMenu = false; localStorage.setItem('layer', ui.layer); renderHead(); }
     else rollLayer(el.dataset.id, ids.indexOf(el.dataset.id) < ids.indexOf(ui.layer) ? -1 : 1);
     renderCal(1);
@@ -2386,11 +2415,11 @@ const actions = {
     await refresh();
     renderHow(true);
   },
-  'del-layer': (el) => confirmIn(el, async () => { await run('delete_item', { type: 'layer', id: el.dataset.id }); if (ui.layer === el.dataset.id) { ui.layer = 'all'; localStorage.setItem('layer', 'all'); } await refresh(); renderHow(true); }),
+  'del-layer': (el) => confirmIn(el, async () => { await run('delete_item', { type: 'layer', id: el.dataset.id }); if (selLayers().includes(el.dataset.id)) { ui.layer = selLayers().filter((x) => x !== el.dataset.id).join(',') || 'all'; localStorage.setItem('layer', ui.layer); } await refresh(); renderHow(true); }),
   'add-sub': async () => {
     const name = $('[data-sub-name]').value.trim(), url = $('[data-sub-url]').value.trim();
     if (!name || !url) return toast('Pon nombre y URL del calendario');
-    const s = await run('add_subscription', { name, url, layerIds: activeLayer() ? [ui.layer] : [] });
+    const s = await run('add_subscription', { name, url, layerIds: selLayers() });
     toast(`${icon('cal', 14)} Descargando «${esc(name)}»…`);
     await refresh();
     renderHow(true);
@@ -2470,6 +2499,7 @@ const actions = {
     await refresh();
   },
   'check-account': async () => { const a = await api.checkAccount(); toast(a.ok ? `${icon('check', 14)} Cuenta de Claude conectada` : 'No hay sesión de Claude en este PC'); await refresh(); renderHow(); },
+  'pin-mem': async (el) => { await api.pinMemory(el.dataset.id, !!el.dataset.on); memCache = await api.memories(); renderHow(); },
   forget: async (el) => { await api.forget(el.dataset.id); memCache = await api.memories(); renderHow(); },
   'copy-mcp': async () => { api.copy(JSON.stringify(await api.mcpConfig(), null, 2)); toast(`${icon('check', 14)} Configuración MCP copiada`); },
   'install-skill': async () => { const p = await api.installSkill(); toast(`${icon('check', 14)} Skill instalada en ${esc(p)}`, 4000); },
@@ -2624,12 +2654,12 @@ document.addEventListener('submit', async (e) => {
     }
     if (f.dataset.form === 'ms') {
       if (f.dataset.id) {
-        await run('update_milestone', { id: f.dataset.id, title: d.title, date: d.date, kind: d.kind, time: d.time, categoryId: d.categoryId ?? undefined });
+        await run('update_milestone', { id: f.dataset.id, title: d.title, date: d.date, kind: d.kind, time: d.time, categoryId: d.categoryId ?? undefined, blocking: !!d.blocking });
         await refresh();
         return swapCard({ type: 'ms', id: f.dataset.id });
       }
       const projectId = await ensureProject();
-      const m = await run('create_milestone', { projectId, title: d.title, date: d.date, kind: d.kind, time: d.time, categoryId: d.categoryId || undefined });
+      const m = await run('create_milestone', { projectId, title: d.title, date: d.date, kind: d.kind, time: d.time, categoryId: d.categoryId || undefined, blocking: !!d.blocking || undefined });
       for (const t of (d.topics || '').split('\n').map((s) => s.trim()).filter(Boolean)) await run('add_topic', { projectId, milestoneId: m.id, title: t });
       toast(`${icon('check', 14)} ${KIND_LABEL[d.kind]} añadido`);
       await refresh();
@@ -2650,7 +2680,7 @@ document.addEventListener('submit', async (e) => {
       swapCard({ type: 'block', id: b.id });
     }
     if (f.dataset.form === 'goal') {
-      const input = { title: d.title, date: d.date, time: d.time || '', projectId: d.goalProject || '', notes: d.notes || '', categoryId: d.goalProject ? d.categoryId || '' : '' };
+      const input = { title: d.title, date: d.date, time: d.time || '', projectId: d.goalProject || '', notes: d.notes || '', categoryId: d.goalProject ? d.categoryId || '' : '', blocking: !!d.blocking };
       const g = f.dataset.id ? await run('update_goal', { id: f.dataset.id, ...input }) : await run('create_goal', { ...input, time: d.time || undefined, projectId: d.goalProject || undefined, categoryId: d.goalProject && d.categoryId ? d.categoryId : undefined });
       if (!f.dataset.id) toast(`${icon('target', 14)} Objetivo marcado`);
       await refresh();
@@ -2725,11 +2755,7 @@ document.addEventListener('keydown', async (e) => {
   if (inp && e.key === 'Escape') return inp.blur();
   if (e.key === 'Enter' && e.target.matches?.('[data-cloud-email], [data-cloud-pw]')) return cloudAuth('in');
   if (e.key === 'Enter' && !e.shiftKey && e.target.matches?.('[data-ai-text]')) return e.preventDefault(), actions['ai-send']();
-  if (e.key === 'Escape') {
-    if (ui.card) return closeCard();
-    if (ui.how === 'open') return closeHow();
-    if (ui.reply) return hideReply();
-  }
+  if (e.key === 'Escape') return escapeCascade(e.target);
   if (e.target.matches('input, textarea, select')) return;
   if (e.key === 'ArrowLeft') changeMonth(-1);
   else if (e.key === 'ArrowRight') changeMonth(1);
@@ -3000,6 +3026,23 @@ document.addEventListener('dblclick', (e) => {
   if (cell && !e.target.closest('.bar')) { if (ui.card) closeCard(true); openCard({ type: 'new-block', date: cell.dataset.date }, cell); } // doble clic en un día: bloque nuevo
 });
 
+// Escape: cierra por orden lo que haya abierto y, si no queda nada, el calendario (como el notch).
+// Llega por el teclado o, sin foco, por la tecla global del proceso principal.
+function escapeCascade(target = document.activeElement) {
+  if ($('.ctx')) return closeCtx();
+  if (ui.agentOpen && document.activeElement?.id === 'agent-in') return closeAgent();
+  if (target?.matches?.('input, textarea, select') && target !== document.body) return target.blur();
+  if (ui.card) return closeCard();
+  if (ui.how === 'open') return closeHow();
+  if (ui.reply) return hideReply();
+  if (ui.layerMenu) { ui.layerMenu = false; return renderHead(); }
+  if (!S.web) api.win('hide');
+}
+api.onEscape(() => escapeCascade());
+// Con el ratón encima del calendario, Escape funciona aunque no tenga el foco
+document.addEventListener('mouseenter', () => api.escHover(true));
+document.addEventListener('mouseleave', () => api.escHover(false));
+
 // ---------- Menú contextual propio ----------
 function closeCtx() {
   const m = $('.ctx');
@@ -3060,10 +3103,11 @@ function ctxFor(target) {
     const { type, id } = bar.dataset;
     const open = (t) => { if (ui.card) closeCard(true); openCard({ type: t, id }, bar); };
     const del = (kind) => ({ label: 'Eliminar', icon: 'trash', danger: true, run: () => run('delete_item', { type: kind, id }) });
-    if (type === 'ms') return [{ label: 'Abrir', icon: 'arrow', run: () => open('ms') }, { label: 'Editar', icon: 'edit', run: () => open('edit-ms') }, { label: 'Planificar estudio', icon: 'wand', run: () => open('plan') }, '-', del('milestone')];
+    const blk = (kind) => { const x = kind === 'goal' ? byId(S.db.goals, id) : byId(S.db.milestones, id); return { label: x?.blocking ? 'Quitar tiempo bloqueado' : 'Marcar como tiempo bloqueado', icon: 'clock', on: !!x?.blocking, run: () => run('set_blocking', { type: kind === 'goal' ? 'goal' : 'milestone', id, blocking: !x?.blocking }) }; };
+    if (type === 'ms') return [{ label: 'Abrir', icon: 'arrow', run: () => open('ms') }, blk('ms'), { label: 'Editar', icon: 'edit', run: () => open('edit-ms') }, { label: 'Planificar estudio', icon: 'wand', run: () => open('plan') }, '-', del('milestone')];
     if (type === 'goal') {
       const g = byId(S.db.goals, id);
-      return [{ label: 'Abrir', icon: 'arrow', run: () => open('goal') }, { label: g?.done ? 'Marcar como no conseguido' : 'Marcar como conseguido', icon: 'target', run: () => run('update_goal', { id, done: !g?.done }) }, { label: 'Editar', icon: 'edit', run: () => open('edit-goal') }, '-', del('goal')];
+      return [{ label: 'Abrir', icon: 'arrow', run: () => open('goal') }, blk('goal'), { label: g?.done ? 'Marcar como no conseguido' : 'Marcar como conseguido', icon: 'target', run: () => run('update_goal', { id, done: !g?.done }) }, { label: 'Editar', icon: 'edit', run: () => open('edit-goal') }, '-', del('goal')];
     }
     if (type === 'block') {
       const b = byId(S.db.blocks, id);
@@ -3115,7 +3159,7 @@ function ctxFor(target) {
   }
   // En cualquier otro sitio: navegación, capas y la propia app
   const items = [{ label: 'Hoy', icon: 'cal', k: 'T', run: () => actions.today() }, { label: '¿Cómo vas?', icon: 'sun', run: () => openHow() }, { label: 'Recordatorios', icon: 'checklist', k: 'R', run: () => actions['rm-go']() }];
-  if ((S.db.layers || []).length) items.push('-', { h: 'Capa' }, { label: 'Todo', icon: 'layers', on: ui.layer === 'all', run: () => actions['set-layer']({ dataset: { id: 'all' } }) }, ...S.db.layers.map((l) => ({ label: l.name, icon: 'layers', on: ui.layer === l.id, run: () => actions['set-layer']({ dataset: { id: l.id } }) })));
+  if ((S.db.layers || []).length) items.push('-', { h: 'Capa' }, { label: 'Todo', icon: 'layers', on: ui.layer === 'all', run: () => actions['set-layer']({ dataset: { id: 'all' } }) }, ...S.db.layers.map((l) => ({ label: l.name, icon: 'layers', on: selLayers().includes(l.id), run: () => actions['set-layer']({ dataset: { id: l.id } }) })));
   if (!S.web) {
     const cur = S.db.settings.mode || 'tray';
     items.push('-', { h: 'Dónde vive' }, ...MODES.map(([m, label, ic]) => ({ label, icon: ic, on: cur === m, run: async () => { await api.setSettings({ mode: m }); await refresh(); } })));
