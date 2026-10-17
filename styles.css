@@ -270,7 +270,7 @@ body.glass-acrylic .num, body.glass-acrylic .month { text-shadow: 0 1px 1px colo
 .task .x { opacity: 0; width: 22px; height: 22px; }
 @media (hover: hover) { .task:hover .x { opacity: 1; } }
 .carry { font-size: 10px; color: var(--warn); background: color-mix(in srgb, var(--warn) 15%, transparent); padding: 0 6px; border-radius: 99px; font-weight: 700; display: inline-flex; gap: 3px; align-items: center; }
-.check { width: 19px; height: 19px; border-radius: 7px; border: 1.8px solid var(--line-strong); flex: none; display: grid; place-items: center; color: #fff; transition: background 0.2s, border-color 0.2s, transform 0.5s var(--spring); }
+.check { width: 20px; height: 20px; border-radius: 7px; border: 2px solid var(--line-strong); flex: none; display: grid; place-items: center; color: #fff; transition: background 0.2s, border-color 0.2s, transform 0.5s var(--spring); }
 .check svg { transform: scale(0); transition: transform 0.45s var(--spring) 0.04s; }
 @media (hover: hover) { .task:hover .check { border-color: var(--c, var(--accent)); transform: scale(1.1); } }
 .task.done .check { background: var(--c, var(--accent)); border-color: var(--c, var(--accent)); }
@@ -1012,7 +1012,7 @@ body.web .wk-it { font-size: 10px; padding: 2px 3px; }
 .c-meta.sums { margin-top: 10px; display: flex; gap: 6px; align-items: center; }
 
 /* Capas: varias a la vez */
-.layer-menu .tick { width: 18px; height: 18px; border-radius: 6px; border: 1.6px solid var(--line-strong); display: grid; place-items: center; flex: none; color: transparent; transition: background 0.2s, border-color 0.2s, transform 0.35s var(--spring); }
+.layer-menu .tick { width: 18px; height: 18px; border-radius: 6px; border: 2px solid var(--line-strong); display: grid; place-items: center; flex: none; color: transparent; transition: background 0.2s, border-color 0.2s, transform 0.35s var(--spring); }
 .layer-menu .tick.on { background: var(--accent); border-color: var(--accent); color: #fff; }
 .layer-menu button:active .tick { transform: scale(0.85); }
 .lm-hint { font-size: 11px; color: var(--faint); padding: 4px 10px 2px; }
