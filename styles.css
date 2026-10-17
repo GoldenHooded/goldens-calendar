@@ -118,7 +118,7 @@ body.glass-acrylic .num, body.glass-acrylic .month { text-shadow: 0 1px 1px colo
 .weekdays div { font-size: 10px; letter-spacing: 0.12em; color: var(--faint); font-weight: 600; padding-left: 9px; }
 
 /* ============ Calendario de puntos ============ */
-.cal { position: absolute; top: 80px; left: 18px; right: 18px; bottom: 16px; }
+.cal { position: absolute; top: 80px; left: 18px; right: 18px; bottom: 16px; transition: top 0.5s cubic-bezier(0.22, 1, 0.36, 1); }
 .dots { position: absolute; inset: 0; pointer-events: none; }
 .dots i { position: absolute; width: 9px; height: 9px; margin: -4.5px 0 0 -4.5px; opacity: 0.55; transition: opacity 0.6s ease; }
 .dots i::before, .dots i::after { content: ''; position: absolute; background: var(--mark); border-radius: 1px; }
@@ -935,7 +935,9 @@ body.web .login-card { border-radius: var(--r-xl); padding: 28px 22px; }
 
 /* ================= Vista semanal ================= */
 .weeks.wkview { display: block; }
-body.view-week .weekdays, body.view-week .dots { display: none; }
+.weekdays, .dots { transition: opacity 0.35s ease, transform 0.45s cubic-bezier(0.22, 1, 0.36, 1); }
+body.view-week .weekdays, body.view-week .dots { opacity: 0; transform: translateY(-6px); pointer-events: none; }
+.view-ghost { position: absolute; inset: 0; pointer-events: none; z-index: 1; }
 body.view-week .cal { top: 62px; }
 body.web.view-week .cal { top: calc(68px + env(safe-area-inset-top)); touch-action: pan-y; }
 .wk { position: absolute; inset: 0; display: flex; flex-direction: column; }
@@ -978,6 +980,20 @@ body.web.view-week .cal { top: calc(68px + env(safe-area-inset-top)); touch-acti
 .weeks.wkview.anim .wk-it { animation: barIn 0.5s var(--out) backwards; }
 body.web .wk-dh .dn { font-size: 16px; width: 28px; height: 28px; }
 body.web .wk-it { font-size: 10px; padding: 2px 3px; }
+
+/* Dependencias de progreso */
+.deps { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 3px; }
+.topic-deps { margin: 6px 0 2px 22px; }
+.dep { display: inline-flex; align-items: center; gap: 4px; height: 20px; padding: 0 3px 0 7px; border-radius: 10px; font-size: 11px; color: var(--muted); background: var(--soft); border: 1px solid var(--line); max-width: 100%; }
+.dep span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dep.done { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 40%, transparent); }
+.dep button { border: 0; background: none; color: inherit; opacity: 0.55; width: 16px; height: 16px; border-radius: 50%; display: grid; place-items: center; cursor: pointer; padding: 0; }
+.dep button:hover { opacity: 1; background: var(--hover); }
+.dep.add { cursor: pointer; padding: 0 8px; border-style: dashed; color: var(--accent); background: none; font: inherit; font-size: 11px; transition: transform 0.35s var(--spring); }
+.dep.add:active { transform: scale(0.94); }
+.task.auto .check { border-style: dashed; }
+.cat-pct { font-size: 11px; opacity: 0.75; margin-left: 4px; font-variant-numeric: tabular-nums; }
+.c-meta.sums { margin-top: 10px; display: flex; gap: 6px; align-items: center; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }

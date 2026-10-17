@@ -449,14 +449,57 @@ function weekViewHTML() {
       <div class="wk-hours" data-key="wkhr">${hours.join('')}</div>${cols.join('')}</div></div>
   </div>`;
 }
-function setView(v) {
-  if (ui.view === v) return;
+// Cambio mes ↔ semana con transición continua: la fila de la semana elegida se abre hasta ocupar todo
+// (el resto de semanas se apartan hacia arriba y hacia abajo) y al volver se cierra en su sitio.
+let viewBusy = false;
+async function setView(v) {
+  if (ui.view === v || viewBusy) return;
+  viewBusy = true;
+  closeCard(true);
+  const toWeek = v === 'week';
+  if (toWeek) ui.weekStart = mondayOf(S.today.slice(0, 7) === ui.month.slice(0, 7) ? S.today : ui.month);
+  else ui.month = ui.weekStart.slice(0, 8) + '01';
   ui.view = v;
   localStorage.setItem('view', v);
-  if (v === 'week') ui.weekStart = mondayOf(S.today.slice(0, 7) === ui.month.slice(0, 7) ? S.today : ui.month);
-  else ui.month = ui.weekStart.slice(0, 8) + '01';
-  document.body.classList.toggle('view-week', v === 'week');
-  goWeekOrMonth(0);
+  const cal = $('#cal');
+  const weeks = $('#weeks');
+  const H = weeks.clientHeight;
+  // Foto de lo que había, para animarla mientras entra lo nuevo
+  const ghost = weeks.cloneNode(true);
+  ghost.removeAttribute('id');
+  ghost.classList.add('view-ghost');
+  ghost.querySelectorAll('[id]').forEach((x) => x.removeAttribute('id'));
+  const seq = ++goSeq;
+  const st = await api.state(gridRange());
+  if (seq !== goSeq) return (viewBusy = false), ghost.remove();
+  S = st;
+  cal.appendChild(ghost);
+  document.body.classList.toggle('view-week', toWeek);
+  renderHead();
+  renderCal(0);
+  // Fila del mes en la que está la semana
+  const monthFrom = addDays(ui.month, -((parse(ui.month).getDay() + 6) % 7));
+  const row = Math.max(0, Math.min(5, Math.floor(diffDays(monthFrom, ui.weekStart) / 7)));
+  const rowTop = (H / 6) * row, rowH = H / 6;
+  const E = 'cubic-bezier(0.22, 1, 0.36, 1)';
+  const band = `inset(${rowTop}px 0 ${Math.max(0, H - rowTop - rowH)}px 0 round 14px)`;
+  const anims = [];
+  if (toWeek) {
+    // Las otras semanas se apartan; la elegida se desvanece mientras la semana grande se abre desde ella
+    [...ghost.children].forEach((w, i) => anims.push(w.animate([{ transform: 'none', opacity: 1 }, { transform: `translateY(${i < row ? -36 : i > row ? 36 : 0}px)`, opacity: 0 }], { duration: i === row ? 380 : 340, easing: E, fill: 'forwards' })));
+    anims.push(weeks.animate([{ clipPath: band, opacity: 0.35 }, { clipPath: 'inset(0px 0 0px 0 round 0px)', opacity: 1 }], { duration: 560, easing: E }));
+    $$('.wk-it, .wk-chip', weeks).forEach((x, i) => x.animate([{ opacity: 0, transform: 'translateY(6px) scale(0.97)' }, { opacity: 1, transform: 'none' }], { duration: 420, delay: 140 + Math.min(i, 14) * 18, easing: E, fill: 'backwards' }));
+  } else {
+    // La semana grande se cierra hasta su fila; las demás semanas vuelven a su sitio desde arriba y abajo
+    anims.push(ghost.animate([{ clipPath: 'inset(0px 0 0px 0 round 0px)', opacity: 1 }, { clipPath: band, opacity: 0 }], { duration: 480, easing: E, fill: 'forwards' }));
+    [...weeks.children].forEach((w, i) => w.animate([{ transform: `translateY(${i < row ? -36 : i > row ? 36 : 0}px)`, opacity: 0 }, { transform: 'none', opacity: 1 }], { duration: 520, delay: i === row ? 60 : 120 + Math.abs(i - row) * 25, easing: E, fill: 'backwards' }));
+  }
+  // La cabecera acompaña: el rango de fechas y el botón cambian con un fundido
+  $('.month .y')?.animate([{ opacity: 0, transform: 'translateY(4px)' }, { opacity: 1, transform: 'none' }], { duration: 380, easing: E });
+  $('.view-btn .ic')?.animate([{ transform: 'scale(0.6) rotate(-20deg)', opacity: 0 }, { transform: 'none', opacity: 1 }], { duration: 420, easing: E });
+  await Promise.all(anims.map((a) => a.finished.catch(() => {})));
+  ghost.remove();
+  viewBusy = false;
 }
 async function goWeekOrMonth(d) {
   closeCard(true);
@@ -522,10 +565,52 @@ function weeksHTML() {
 }
 
 // ---------- tarjeta (morph desde una barra o un día) ----------
+// ---------- Dependencias de progreso (un tema o subapartado se completa con tareas concretas) ----------
+const REF_ICON = { block: 'layers', goal: 'target', todo: 'checklist', task: 'check' };
+function refOf(r) {
+  const list = { task: S.db.tasks, block: S.db.blocks, goal: S.db.goals || [], todo: S.db.todos || [] }[r.type];
+  return list && byId(list, r.id);
+}
+function refIsDone(r) {
+  const x = refOf(r);
+  if (!x) return false;
+  if (r.type === 'block') return S.stats.blocks[x.id]?.pct === 100;
+  if (r.type === 'task') return S.stats.autoDone[x.id] ?? !!x.done;
+  return !!x.done;
+}
+function refText(r) {
+  const x = refOf(r);
+  if (!x) return '';
+  const when = r.type === 'block' ? ` · ${fmtShort(x.date)}${x.start ? ' ' + x.start : ''}` : r.type === 'goal' ? ` · ${fmtShort(x.date)}` : r.type === 'todo' && x.due ? ` · ${fmtShort(x.due)}` : '';
+  return esc(x.title) + when;
+}
+// Chips de lo que hace falta para completar un tema o un subapartado
+const depChips = (target, kind) => (target.requires || []).filter(refOf).map((r) => `<span class="dep ${refIsDone(r) ? 'done' : ''}" data-key="dep-${r.id}">${icon(refIsDone(r) ? 'check' : REF_ICON[r.type], 11)}<span>${refText(r)}</span><button data-act="unlink" data-kind="${kind}" data-target="${target.id}" data-id="${r.id}" title="Quitar">${icon('x', 10)}</button></span>`).join('');
+function formLink({ topicId, taskId }) {
+  const target = topicId ? byId(S.db.topics, topicId) : byId(S.db.tasks, taskId);
+  if (!target) return null;
+  const pid = topicId ? target.projectId : byId(S.db.topics, target.topicId)?.projectId;
+  const cur = new Set((target.requires || []).map((r) => r.type + ':' + r.id));
+  const row = (type, x, text) => `<label><input type="checkbox" name="ref" value="${type}:${x.id}" ${cur.has(type + ':' + x.id) ? 'checked' : ''}> ${icon(REF_ICON[type], 12)} ${text}</label>`;
+  const blocks = S.db.blocks.filter((b) => b.projectId === pid).sort((a, b) => a.date.localeCompare(b.date) || (a.start || '').localeCompare(b.start || ''));
+  const goals = (S.db.goals || []).filter((g) => g.projectId === pid);
+  const todos = (S.db.todos || []).filter((t) => t.projectId === pid);
+  const tasks = S.db.tasks.filter((t) => t.id !== taskId && t.topicId !== topicId && byId(S.db.topics, t.topicId)?.projectId === pid);
+  const grp = (title, html) => (html ? `<div class="grp">${title}</div>${html}` : '');
+  const list = grp('Bloques (time blocking)', blocks.map((b) => row('block', b, `${esc(b.title)} <span style="color:var(--faint)">· ${fmtShort(b.date)}${b.start ? ' ' + b.start : ''}</span>`)).join(''))
+    + grp('Objetivos', goals.map((g) => row('goal', g, `${esc(g.title)} <span style="color:var(--faint)">· ${fmtShort(g.date)}</span>`)).join(''))
+    + grp('Recordatorios', todos.map((t) => row('todo', t, esc(t.title))).join(''))
+    + grp('Subapartados de otros temas', tasks.map((t) => row('task', t, `${esc(t.title)} <span style="color:var(--faint)">· ${esc(byId(S.db.topics, t.topicId)?.title || '')}</span>`)).join(''));
+  return `<form data-form="link" data-topic="${topicId || ''}" data-task="${taskId || ''}"><div class="c-title">¿Con qué se completa «${esc(target.title)}»?</div>
+    <div class="c-meta" style="margin-top:6px">${topicId ? 'Lo que marques suma al % del tema (y del examen o seminario).' : 'Este subapartado se marcará solo cuando completes todo lo que marques.'}</div>
+    <div class="field"><div class="picklist" style="max-height:260px">${list || '<div class="hint" style="padding:6px 8px">Aún no hay bloques, objetivos ni recordatorios de este proyecto.</div>'}</div></div>
+    ${formFoot('Guardar')}</form>`;
+}
 const taskRow = (t, color, from = '') => `
-  <div class="task ${t.done ? 'done' : ''}" style="--c:${color}" data-act="toggle-task" data-id="${t.id}">
+  <div class="task ${(S.stats.autoDone?.[t.id] ?? t.done) ? 'done' : ''} ${t.requires?.length ? 'auto' : ''}" style="--c:${color}" data-act="toggle-task" data-id="${t.id}">
     <span class="check">${icon('check', 12)}</span>
-    <span class="tt"><span class="tx">${esc(t.title)}</span>${from ? `<span class="from">${esc(from)}</span>` : ''}</span>
+    <span class="tt"><span class="tx">${esc(t.title)}</span>${from ? `<span class="from">${esc(from)}</span>` : ''}${t.requires?.length ? `<span class="deps">${depChips(t, 'task')}</span>` : ''}</span>
+    <button class="ibtn x" data-act="link-open" data-id="task:${t.id}" title="Depende de…">${icon('layers', 12)}</button>
     ${t.carried ? `<span class="carry" title="Arrastrada de días anteriores">${icon('redo', 10)}${t.carried}</span>` : ''}
     <button class="ibtn x" data-act="del-task" data-id="${t.id}" title="Quitar">${icon('x', 12)}</button>
   </div>`;
@@ -545,6 +630,7 @@ function cardBlock(id) {
     <div class="c-hero" style="--c:${p.color}">${ring('cb-' + id, st.pct, p.color, 48, 5)}
       <div><div style="font-weight:600">${st.carried ? 'Pendientes movidos' : st.manual ? (b.done ? 'Hecho' : 'Sin tareas') : `${st.done} de ${st.total} hechas`}</div>
       ${m ? `<div class="lbl"><a class="lnk" data-act="open" data-type="ms" data-id="${m.id}">${esc(m.title)}</a> · ${rel(diffDays(S.today, m.date)).toLowerCase()}</div>` : ''}</div></div>
+    ${(() => { const sums = [...S.db.topics.filter((tp) => (tp.requires || []).some((r) => r.id === id)).map((tp) => tp.title), ...S.db.tasks.filter((t) => (t.requires || []).some((r) => r.id === id)).map((t) => t.title), ...(b.milestoneId && !tasks.length && m ? [m.title] : []), ...(b.categoryId && !tasks.length && catOf(b.projectId, b.categoryId) ? [catOf(b.projectId, b.categoryId).name] : [])]; return sums.length ? `<div class="c-meta sums">${icon('layers', 12)} Suma a: ${sums.map(esc).join(' · ')}</div>` : ''; })()}
     <div class="tasks">${tasks.map((t) => taskRow(t, p.color, byId(S.db.topics, t.topicId)?.title)).join('')}
       ${!tasks.length && !st.carried ? `<div class="task ${b.done ? 'done' : ''}" style="--c:${p.color}" data-act="toggle-block" data-id="${id}"><span class="check">${icon('check', 12)}</span><span class="tt"><span class="tx">Bloque completado</span></span></div>` : ''}
       <input class="inline-add" data-key="addb-${id}" data-add="block-task" data-id="${id}" placeholder="Añadir tarea a este bloque  ↵" />
@@ -575,6 +661,7 @@ function cardMilestone(id) {
       return `<div class="topic ${ui.closed.has(tp.id) ? 'closed' : ''}"><div class="topic-h" data-act="fold" data-id="${tp.id}"><span class="chev">${icon('chevD', 14)}</span><span class="name">${esc(tp.title)}</span><span class="meta">${ts.done}/${ts.total}</span>
         <button class="ibtn sm" data-act="del-topic" data-id="${tp.id}" title="Eliminar tema">${icon('trash', 12)}</button></div>
         ${prog('tp-' + tp.id, ts.pct, p.color)}
+        <div class="deps topic-deps">${depChips(tp, 'topic')}<button class="dep add" data-act="swap" data-type="link" data-id="topic:${tp.id}">${icon('plus', 11)} Depende de…</button></div>
         <div class="tasks">${tasks.map((t) => taskRow(t, p.color)).join('')}<input class="inline-add" data-key="addt-${tp.id}" data-add="task" data-topic="${tp.id}" placeholder="Añadir subapartado  ↵" /></div></div>`;
     }).join('')}
     <input class="inline-add" style="margin-top:12px" data-key="addtp-${id}" data-add="topic" data-project="${p.id}" data-ms="${id}" placeholder="Nuevo tema  ↵" />
@@ -726,7 +813,7 @@ function formPlan({ id }) {
     ${formFoot('Planificar')}</form>`;
 }
 
-const CARD_W = { ext: 300, goal: 310, 'new-goal': 320, 'edit-goal': 320, block: 320, ms: 340, day: 300, 'new-project': 320, 'new-ms': 330, 'edit-ms': 330, 'new-block': 350, 'edit-block': 350, plan: 330 };
+const CARD_W = { ext: 300, goal: 310, 'new-goal': 320, 'edit-goal': 320, block: 320, ms: 340, day: 300, 'new-project': 320, 'new-ms': 330, 'edit-ms': 330, 'new-block': 350, 'edit-block': 350, plan: 330, link: 350 };
 function cardHTML(v) {
   switch (v.type) {
     case 'goal': return cardGoal(v.id);
@@ -742,6 +829,7 @@ function cardHTML(v) {
     case 'new-block': return formBlock({ date: v.date, ms: v.ms, start: v.start });
     case 'edit-block': return formBlock({ id: v.id });
     case 'plan': return formPlan({ id: v.id });
+    case 'link': { const [k, id] = String(v.id || '').split(':'); return formLink(k === 'topic' ? { topicId: id } : { taskId: id }); }
   }
 }
 function measure(html, width) {
@@ -1793,7 +1881,7 @@ function howOrganize() {
       <div>
         ${sec('sec-projects', 'folder', 'Proyectos', 'Asignaturas, trabajos y proyectos propios, con sus subcategorías (p. ej. seminarios, prácticas, exámenes). Toca el color para cambiarlo.', `
           ${S.db.projects.map((p) => `<div class="list-row" data-key="pr-${p.id}" style="cursor:default"><button class="color-btn ${ui.colorFor === p.id ? 'open' : ''}" style="--c:${p.color}" data-act="pick-color" data-id="${p.id}" title="Cambiar color"></button><div class="grow"><div class="ttl">${esc(p.name)}</div><div class="meta">${KIND_LABEL[p.kind] || ''} · ${S.stats.projects[p.id].pct}%</div></div><button class="ibtn" data-act="del-project" data-id="${p.id}" title="Eliminar">${icon('trash', 13)}</button></div>${ui.colorFor === p.id ? paletteRow(p.id, p.color, 'project') : ''}
-            <div class="cat-row" data-key="pc-${p.id}" style="--c:${p.color}">${(p.categories || []).map((c) => `<span class="cat-chip" data-key="cc-${c.id}"><input class="cat-name" data-cat-name="${c.id}" data-project="${p.id}" value="${esc(c.name)}" size="${Math.max(3, c.name.length)}" title="Renombrar"><button data-act="del-cat" data-project="${p.id}" data-id="${c.id}" title="Quitar subcategoría">${icon('x', 11)}</button></span>`).join('')}<input class="cat-add" data-add="category" data-project="${p.id}" data-key="catadd-${p.id}" placeholder="+ Subcategoría"></div>`).join('') || '<div class="hint">Aún no hay proyectos.</div>'}
+            <div class="cat-row" data-key="pc-${p.id}" style="--c:${p.color}">${(p.categories || []).map((c) => `<span class="cat-chip" data-key="cc-${c.id}"><input class="cat-name" data-cat-name="${c.id}" data-project="${p.id}" value="${esc(c.name)}" size="${Math.max(3, c.name.length)}" title="Renombrar">${S.stats.categories?.[c.id]?.total ? `<span class="cat-pct">${S.stats.categories[c.id].pct}%</span>` : ''}<button data-act="del-cat" data-project="${p.id}" data-id="${c.id}" title="Quitar subcategoría">${icon('x', 11)}</button></span>`).join('')}<input class="cat-add" data-add="category" data-project="${p.id}" data-key="catadd-${p.id}" placeholder="+ Subcategoría"></div>`).join('') || '<div class="hint">Aún no hay proyectos.</div>'}
           <input class="inline-add" data-add="project" data-key="addproj" placeholder="Nuevo proyecto  ↵" />`)}
         ${sec('sec-subs', 'cal', 'Calendarios suscritos', 'Calendarios externos (Google, Outlook, iCloud). Sus eventos son de solo lectura y se actualizan solos.', `
           ${(S.db.subscriptions || []).map((s) => `<div class="list-row" data-key="sb-${s.id}" style="cursor:default"><button class="color-btn ${ui.colorFor === s.id ? 'open' : ''}" style="--c:${s.color}" data-act="pick-color" data-id="${s.id}" title="Cambiar color"></button>
@@ -2196,8 +2284,9 @@ const actions = {
   'card-back': () => { if (S.web) return navBack(); const back = ui.card?.back; if (!back) return closeCard(); S.web ? swapSheet(back, -1) : swapCard(back); ui.card.back = back.back; $('#card').classList.toggle('has-back', !!back.back); },
   'close-card': () => closeCard(),
   'toggle-task': async (el, e) => {
-    if (e.target.closest('.x')) return;
+    if (e.target.closest('.x, .dep')) return;
     const t = byId(S.db.tasks, el.dataset.id);
+    if (t.requires?.length) return toast(`${icon('layers', 14)} Se marca solo al completar aquello de lo que depende`);
     const done = !t.done;
     popCheck(el, done);
     t.done = done;
@@ -2369,6 +2458,17 @@ const actions = {
   'mcp-revoke': (el) => confirmIn(el, async () => { await api.mcpLinkRevoke(); toast('Enlace desactivado'); loadMcp(); }),
   'mcp-reload': () => loadMcp(),
   'del-cat': (el) => confirmIn(el, async () => { await run('update_project', { id: el.dataset.project, removeCategoryIds: [el.dataset.id] }); await refresh(); renderHow(true); }),
+  'link-open': (el, e) => {
+    e.stopPropagation();
+    if (ui.card) { const back = ui.card; swapCard({ type: 'link', id: el.dataset.id }); ui.card.back = back; return $('#card').classList.toggle('has-back', true); }
+    if (ui.how === 'open') closeHow();
+    openCard({ type: 'link', id: el.dataset.id }, el);
+  },
+  unlink: async (el, e) => {
+    e.stopPropagation();
+    await run('link_progress', { [el.dataset.kind === 'topic' ? 'topicId' : 'taskId']: el.dataset.target, remove: [el.dataset.id] });
+    await refresh();
+  },
   'check-account': async () => { const a = await api.checkAccount(); toast(a.ok ? `${icon('check', 14)} Cuenta de Claude conectada` : 'No hay sesión de Claude en este PC'); await refresh(); renderHow(); },
   forget: async (el) => { await api.forget(el.dataset.id); memCache = await api.memories(); renderHow(); },
   'copy-mcp': async () => { api.copy(JSON.stringify(await api.mcpConfig(), null, 2)); toast(`${icon('check', 14)} Configuración MCP copiada`); },
@@ -2555,6 +2655,16 @@ document.addEventListener('submit', async (e) => {
       if (!f.dataset.id) toast(`${icon('target', 14)} Objetivo marcado`);
       await refresh();
       return swapCard({ type: 'goal', id: g.id });
+    }
+    if (f.dataset.form === 'link') {
+      const target = f.dataset.topic ? byId(S.db.topics, f.dataset.topic) : byId(S.db.tasks, f.dataset.task);
+      const want = new Set(fd.getAll('ref'));
+      const had = new Set((target.requires || []).map((r) => r.type + ':' + r.id));
+      const add = [...want].filter((k) => !had.has(k)).map((k) => ({ type: k.split(':')[0], id: k.split(':')[1] }));
+      const remove = [...had].filter((k) => !want.has(k)).map((k) => k.split(':')[1]);
+      await run('link_progress', { topicId: f.dataset.topic || undefined, taskId: f.dataset.task || undefined, add, remove });
+      await refresh();
+      return actions['card-back']();
     }
     if (f.dataset.form === 'plan') {
       const out = await run('plan_study', { milestoneId: f.dataset.id, from: d.from, reviewDays: +d.reviewDays, skipWeekends: !!d.skipWeekends, start: d.start || undefined, end: d.end || undefined });
