@@ -653,7 +653,7 @@ body.web .rm-title-in, .rm-title-in { font: inherit; font-size: 30px; color: inh
 /* ================= Móvil (app web) =================
    Estándares en MOBILE-QUALITY.md. Todo va bajo body.web: el escritorio no cambia.
    Solo se animan transform y opacity; lo grande (hojas, paneles) frena sin rebote. */
-html.web-root { height: 100%; background: #000; }
+html.web-root { height: 100%; background: #000; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 body.web {
   --bg-web: #121211; --panel: #121211; --card: #1d1d1b; --soft: #272724; --hover: rgba(255, 255, 255, 0.06); --press: rgba(255, 255, 255, 0.1);
   --line: rgba(255, 255, 255, 0.075); --line-strong: rgba(255, 255, 255, 0.17); --text: #f4f3ee; --muted: #a29f97; --faint: #7a776f;
@@ -742,7 +742,7 @@ body.web .how.open { display: block; }
 body.web .how-btn { display: none; }
 body.web .how-body { left: 0; right: 0; top: var(--safe-t); bottom: 0; width: auto; height: auto; transform: none; opacity: 1; transition: none; pointer-events: auto; padding: 0 var(--gutter) calc(var(--safe-b) + 40px); overscroll-behavior: contain; }
 body.web .how.open .how-body > * { animation: none; }
-body.web .card.page .card-in { position: relative; inset: auto; width: auto; height: auto; flex: 1; min-height: 0; overflow-y: auto; padding: 0 var(--gutter) calc(var(--safe-b) + 32px); overscroll-behavior: contain; }
+body.web .card.page .card-in { position: relative; inset: auto; width: auto; height: auto; flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 0 var(--gutter) calc(var(--safe-b) + 32px); overscroll-behavior: contain; }
 /* Vista de día: el scroll vertical es del navegador; a los lados, el carrusel de días */
 body.web .card.day .card-in { touch-action: pan-y; }
 body.web .card .card-in.nb { pointer-events: none; }
@@ -863,37 +863,46 @@ body.web .ctx-item { min-height: 44px; padding: 0 12px; font-size: 16px; border-
 body.web .ctx-item:active { background: var(--press); }
 body.web .ctx-item .k { display: none; } /* atajos de teclado: no aplican al dedo */
 
-/* --- Vista de un día --- */
-.df-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 4px 0 16px; }
-.df-head .ibtn { margin-right: -10px; }
-.df-date { display: flex; align-items: center; gap: 14px; }
-.df-num { font-family: var(--serif); font-size: 46px; line-height: 1; min-width: 58px; height: 58px; display: grid; place-items: center; border-radius: var(--r-lg); background: var(--soft); }
-.df-num.today { background: var(--accent); color: #fff; }
-.df-wd { font-family: var(--serif); font-size: 24px; line-height: 1.15; }
-.df-mo { color: var(--muted); font-size: 14px; margin-top: 2px; }
-.df-list { display: grid; gap: 8px; }
-.arow { display: flex; align-items: center; gap: 12px; min-height: 64px; padding: 12px 14px; border-radius: var(--r-lg); background: var(--card); cursor: pointer; transition: transform 0.25s var(--out), background 0.15s; }
-.card.full .arow { background: var(--soft); }
-.arow:active { transform: scale(0.97); transition-duration: 0.08s; }
-.abar { width: 4px; align-self: stretch; border-radius: 2px; background: var(--c); flex: none; }
+/* --- Vista de un día (como el Calendario de iOS): tira de la semana arriba y filas con la hora a la izquierda --- */
+.page-bar { justify-content: space-between; }
+.page-add { margin-right: -10px; color: var(--accent); }
+.df-strip { flex: none; padding: 0 6px 6px; border-bottom: 1px solid var(--line); overflow: hidden; }
+.ds-week { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); }
+.ds-d { border: 0; background: none; color: var(--text); font: inherit; display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 0; min-height: 58px; cursor: pointer; }
+.ds-d .wd { font-size: 11px; font-weight: 600; color: var(--faint); }
+.ds-d .dn { width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; font-size: 17px; font-weight: 500; font-variant-numeric: tabular-nums; transition: background-color 0.25s var(--out), color 0.25s var(--out), transform 0.2s var(--out); }
+.ds-d.today .dn { color: var(--accent); font-weight: 700; }
+.ds-d.on .dn { background: var(--text); color: var(--bg-web, #121211); font-weight: 700; }
+.ds-d.on.today .dn { background: var(--accent); color: #fff; }
+.ds-d:active .dn { transform: scale(0.9); transition-duration: 0.08s; }
+.ds-d i { width: 4px; height: 4px; border-radius: 50%; }
+.ds-d i.has { background: var(--faint); }
+.df-head { padding: 14px 2px 4px; }
+.df-title { font-size: 28px; font-weight: 700; line-height: 1.15; letter-spacing: -0.01em; }
+.df-mo { color: var(--muted); font-size: 15px; margin-top: 2px; }
+.df-sec { font-size: 12px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--faint); margin: 18px 2px 6px; }
+.df-list { display: grid; gap: 6px; min-width: 0; }
+.arow { display: flex; align-items: center; gap: 10px; min-width: 0; min-height: 52px; padding: 9px 12px 9px 10px; border-radius: var(--r-md); background: var(--card); cursor: pointer; transition: background-color 0.2s; }
+.arow:active { background: var(--soft); transition-duration: 0s; }
+.arow.now { background: color-mix(in srgb, var(--c) 14%, var(--card)); }
+.atime { width: 42px; flex: none; display: flex; flex-direction: column; font-size: 13px; line-height: 1.3; font-variant-numeric: tabular-nums; }
+.atime b { font-weight: 600; color: var(--text); }
+.atime span { color: var(--faint); }
+.abar { width: 3px; align-self: stretch; border-radius: 2px; background: var(--c); flex: none; }
 .agrow { flex: 1; min-width: 0; }
-.at { display: flex; align-items: center; gap: 6px; font-size: 16px; font-weight: 600; line-height: 1.3; }
-.at span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.at .ic { color: var(--c); flex: none; }
-.as { color: var(--muted); font-size: 13px; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.atime { color: var(--muted); font-size: 13px; text-align: right; flex: none; font-variant-numeric: tabular-nums; }
+.at { display: flex; align-items: flex-start; gap: 6px; min-width: 0; font-size: 15px; font-weight: 600; line-height: 1.3; }
+.at span { min-width: 0; overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow-wrap: anywhere; }
+.at .ic { color: var(--c); flex: none; margin-top: 2px; }
+.as { color: var(--muted); font-size: 13px; line-height: 1.3; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .arow.done .at span { color: var(--muted); text-decoration: line-through; }
-.acheck { width: 32px; height: 32px; border-radius: 50%; border: 2px solid var(--c); background: transparent; color: transparent; display: grid; place-items: center; flex: none; cursor: pointer; transition: background 0.2s, color 0.2s, transform 0.4s var(--spring); }
+.acheck { position: relative; width: 26px; height: 26px; border-radius: 50%; border: 2px solid var(--c); background: transparent; color: transparent; display: grid; place-items: center; flex: none; cursor: pointer; transition: background-color 0.2s, color 0.2s, transform 0.2s var(--out); }
+.acheck::after { content: ''; position: absolute; inset: -9px; } /* área de toque de 44 px */
 .acheck.on, .arow.done .acheck { background: var(--c); color: #fff; }
-.acheck:active { transform: scale(0.92); }
-.df-empty { color: var(--muted); text-align: center; padding: 34px 0; font-size: 16px; }
-.df-st { margin-top: 16px; width: 100%; }
+.acheck:active { transform: scale(0.9); }
+.df-empty { display: grid; gap: 6px; color: var(--muted); text-align: center; padding: 56px 0 40px; font-size: 17px; }
+.df-empty span { font-size: 14px; color: var(--faint); }
+.df-st { margin-top: 22px; width: 100%; }
 .df-st button { flex: 1; justify-content: center; font-size: 14px; }
-.df-add { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 16px; }
-.df-add button { border: 0; background: var(--soft); color: var(--text); border-radius: var(--r-lg); min-height: 72px; padding: 12px 4px 10px; display: grid; justify-items: center; align-content: center; gap: 6px; font-size: 12px; cursor: pointer; transition: transform 0.25s var(--out), background 0.15s; }
-.df-add button .ic { color: var(--accent); }
-.df-add button:active { transform: scale(0.97); background: var(--press); transition-duration: 0.08s; }
-.df-hint { color: var(--faint); font-size: 12px; text-align: center; margin-top: 18px; }
 
 /* --- Recordatorios --- */
 body.web .rm-row { background: var(--panel); min-height: 48px; }

@@ -400,6 +400,7 @@ const subBlocking = (id) => !!byId(S.db.subscriptions || [], id)?.blocking;
 function allDayBlocked(d) {
   return S.db.blocks.some((b) => b.blocking && !b.start && b.date <= d && blockEnd(b) >= d) || (S.db.goals || []).some((g) => g.blocking && !g.time && g.date === d) || S.db.milestones.some((m) => m.blocking && !m.time && m.date === d) || (S.db.extEvents || []).some((e) => !e.start && subBlocking(e.subId) && e.date <= d && (e.endDate || e.date) >= d);
 }
+const wkZoom = () => (ui.wkZoom ??= Math.min(4, Math.max(1, +localStorage.getItem('wkZoom') || 1)));
 function weekViewHTML() {
   const ws = ui.weekStart;
   const days = [...Array(7)].map((_, i) => addDays(ws, i));
@@ -425,12 +426,14 @@ function weekViewHTML() {
   const adRows = Math.min(3, Math.max(0, ...days.map((d) => allday[d].length)));
   const H = $('#weeks').clientHeight || 520;
   const avail = H - 40 - (adRows ? adRows * 21 + 8 : 0);
-  const ppm = Math.max(0.62, avail / (h1 - h0));
+  // Alto de una hora: lo justo para que quepa el día y, encima, el zoom (pellizcar en el móvil, Ctrl+rueda en el PC).
+  // Las posiciones van en minutos × --ppm, así el zoom solo cambia una variable y no hay que volver a pintar
+  const ppm = Math.max(0.62, avail / (h1 - h0)) * wkZoom();
   const now = new Date(), nowM = now.getHours() * 60 + now.getMinutes();
   const itemHTML = (d, it, left, width) => {
-    const top = (it.from - h0) * ppm, h = Math.max(16, (Math.min(it.to, h1) - it.from) * ppm - 2);
+    const len = Math.min(it.to, h1) - it.from;
     const act = it.type === 'todo' ? 'data-act="rm-goto"' : `data-act="open" data-type="${it.type}"`;
-    return `<div class="wk-it ${it.type} ${it.blocking ? 'blocking' : ''} ${it.done ? 'done' : ''} ${h < 30 ? 'thin' : ''}" ${act} data-id="${esc(it.id)}" data-key="wi-${esc(it.id)}-${d}" style="top:${top}px;height:${h}px;left:${left}%;width:${width}%;--c:${it.color};--ink:${ink(it.color)}" title="${esc(it.title)} · ${hhmmOf(it.from)}–${hhmmOf(it.to)}">
+    return `<div class="wk-it ${it.type} ${it.blocking ? 'blocking' : ''} ${it.done ? 'done' : ''} ${len * ppm < 32 ? 'thin' : ''}" ${act} data-id="${esc(it.id)}" data-key="wi-${esc(it.id)}-${d}" style="top:calc(${it.from - h0}px * var(--ppm));height:max(16px, calc(${len}px * var(--ppm) - 2px));left:${left}%;width:${width}%;--c:${it.color};--ink:${ink(it.color)}" title="${esc(it.title)} · ${hhmmOf(it.from)}–${hhmmOf(it.to)}">
       <b>${hhmmOf(it.from)}</b><span>${it.icon ? icon(it.icon, 10) : ''}${esc(it.title)}</span></div>`;
   };
   const cols = days.map((d) => {
@@ -455,14 +458,14 @@ function weekViewHTML() {
     }
     flush();
     const blockedDay = allDayBlocked(d);
-    return `<div class="wk-col ${d === S.today ? 'today' : ''} ${blockedDay ? 'blocked' : ''}" data-act="wk-slot" data-date="${d}" data-key="wc-${d}">${html}${d === S.today && nowM >= h0 && nowM <= h1 ? `<div class="wk-now" data-key="wk-now" style="top:${(nowM - h0) * ppm}px"></div>` : ''}</div>`;
+    return `<div class="wk-col ${d === S.today ? 'today' : ''} ${blockedDay ? 'blocked' : ''}" data-act="wk-slot" data-date="${d}" data-key="wc-${d}">${html}${d === S.today && nowM >= h0 && nowM <= h1 ? `<div class="wk-now" data-key="wk-now" style="top:calc(${nowM - h0}px * var(--ppm))"></div>` : ''}</div>`;
   });
   const hours = [];
-  for (let m = h0; m <= h1; m += 60) hours.push(`<span style="top:${(m - h0) * ppm}px">${m / 60}</span>`);
+  for (let m = h0; m <= h1; m += 60) hours.push(`<span style="top:calc(${m - h0}px * var(--ppm))">${m / 60}</span>`);
   return `<div class="wk" data-key="wk">
     <div class="wk-row wk-head" data-key="wkh"><div class="wk-gut"></div>${days.map((d, i) => `<button class="wk-dh ${d === S.today ? 'today' : ''} ${parse(d).getDay() % 6 === 0 ? 'we' : ''}" data-act="open-day" data-date="${d}" data-key="wdh-${d}"><span class="wd">${WD_SHORT[i]}</span><span class="dn">${parse(d).getDate()}</span></button>`).join('')}</div>
     ${adRows ? `<div class="wk-row wk-allday" data-key="wka"><div class="wk-gut"></div>${days.map((d) => `<div class="wk-ad" data-key="wad-${d}">${allday[d].slice(0, 3).map((it) => `<div class="wk-chip ${it.type} ${it.blocking ? 'blocking' : ''} ${it.done ? 'done' : ''}" ${it.type === 'todo' ? 'data-act="rm-goto"' : `data-act="open" data-type="${it.type}"`} data-id="${esc(it.id)}" data-key="wac-${esc(it.id)}-${d}" style="--c:${it.color};--ink:${ink(it.color)}" title="${esc(it.title)}">${it.icon ? icon(it.icon, 10) : ''}${esc(it.title)}</div>`).join('')}${allday[d].length > 3 ? `<span class="wk-more">+${allday[d].length - 3}</span>` : ''}</div>`).join('')}</div>` : ''}
-    <div class="wk-body" data-key="wkb"><div class="wk-grid" data-key="wkg" data-h0="${h0}" data-ppm="${ppm}" style="height:${(h1 - h0) * ppm}px;--ppm:${ppm}">
+    <div class="wk-body" data-key="wkb"><div class="wk-grid" data-key="wkg" data-h0="${h0}" data-ppm="${ppm}" style="height:calc(${h1 - h0}px * var(--ppm));--ppm:${ppm}">
       <div class="wk-hours" data-key="wkhr">${hours.join('')}</div>${cols.join('')}</div></div>
   </div>`;
 }
@@ -528,6 +531,7 @@ async function goWeekOrMonth(d) {
   renderCal(d || 1, !!d);
 }
 function changeWeek(d) {
+  if (S?.web && d) return carGo(addDays(ui.weekStart, d * 7), d); // en el móvil, la semana desliza como el mes
   ui.weekStart = addDays(ui.weekStart, d * 7);
   ui.month = ui.weekStart.slice(0, 8) + '01';
   goWeekOrMonth(d);
@@ -1215,19 +1219,39 @@ function withMonth(st, month, fn) {
   ui.month = month;
   try { return fn(); } finally { [S, ui.month] = keep; }
 }
-let car = null; // { dx, w, side: { 1, -1: { month, st, el, ready } }, busy }
-function carSide(c, d, month = addMonths(ui.month, d)) {
-  if (c.side[d]?.month === month) return c.side[d].ready;
-  const s = (c.side[d] = { month });
-  s.ready = api.state(withMonth(S, month, gridRange)).then((st) => {
+let car = null; // { dx, w, week, side: { 1, -1: { key, st, el, ready } }, busy }
+// Una «página» del carrusel es un mes o, en la vista semanal, una semana (su lunes)
+const carKey = (d, week = ui.view === 'week') => (week ? addDays(ui.weekStart, 7 * d) : addMonths(ui.month, d));
+function withPage(st, key, week, fn) {
+  if (!week) return withMonth(st, key, fn);
+  const keep = [S, ui.weekStart, ui.month];
+  S = st;
+  ui.weekStart = key;
+  ui.month = key.slice(0, 8) + '01';
+  try { return fn(); } finally { [S, ui.weekStart, ui.month] = keep; }
+}
+// Hora que se ve arriba de la semana (para que la vecina entre a la misma altura)
+function wkTopMin(root) {
+  const g = $('.wk-grid', root), b = $('.wk-body', root);
+  return g && b ? +g.dataset.h0 + b.scrollTop / +g.dataset.ppm : null;
+}
+function wkScrollTo(root, min) {
+  const g = $('.wk-grid', root), b = $('.wk-body', root);
+  if (g && b && min != null) b.scrollTop = (min - +g.dataset.h0) * +g.dataset.ppm;
+}
+function carSide(c, d, key = carKey(d, c.week)) {
+  if (c.side[d]?.key === key) return c.side[d].ready;
+  const s = (c.side[d] = { key });
+  s.ready = api.state(withPage(S, key, c.week, gridRange)).then((st) => {
     if (c.side[d] !== s || c.done) return null;
     s.st = st;
     s.el = document.createElement('div');
-    s.el.className = 'weeks nb';
+    s.el.className = 'weeks nb' + (c.week ? ' wkview' : '');
     s.el.setAttribute('aria-hidden', 'true');
-    s.el.innerHTML = withMonth(st, month, weeksHTML);
+    s.el.innerHTML = withPage(st, key, c.week, c.week ? weekViewHTML : weeksHTML);
     s.el.style.transform = tx(c.dx + d * (c.w + PAGE_GAP));
     $('#cal').appendChild(s.el);
+    if (c.week) wkScrollTo(s.el, wkTopMin($('#weeks')));
     return s;
   });
   return s.ready;
@@ -1238,56 +1262,68 @@ function carMove(c) {
 }
 async function carRelease(c, go, vx) {
   c.busy = true;
-  const side = go ? await carSide(c, go, c.side[go]?.month) : null;
+  const side = go ? await carSide(c, go, c.side[go]?.key) : null;
   if (!side?.el) go = 0;
   const w = c.w + PAGE_GAP;
   const els = [[$('#weeks'), 0], ...[1, -1].filter((d) => c.side[d]?.el).map((d) => [c.side[d].el, d * w])];
   const anims = glide(els, c.dx, go ? -go * w : 0, vx);
+  const top = c.week && go ? wkTopMin(side.el) : null;
   if (go) {
-    ui.month = side.month;
+    if (c.week) (ui.weekStart = side.key), (ui.month = side.key.slice(0, 8) + '01');
+    else ui.month = side.key;
     S = side.st;
     renderHead();
     $('#head .month')?.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 220, easing: 'ease-out' });
   }
   await anims[0].finished;
-  if (go) renderCal(go, false); // mismo contenido que el vecino y ya en su sitio: el relevo no se ve
+  if (go) {
+    renderCal(go, false); // mismo contenido que el vecino y ya en su sitio: el relevo no se ve
+    if (c.week) wkScrollTo($('#weeks'), top);
+  }
   anims.forEach((a) => a.cancel());
   c.done = true;
   for (const d of [1, -1]) c.side[d]?.el?.remove();
   if (car === c) car = null;
 }
 // Flechas y «Hoy»: el mismo carrusel, con un empujón inicial como si lo lanzaras
-async function carGo(month, d) {
+async function carGo(key, d) {
   if (car) return;
-  const c = (car = { dx: 0, w: $('#cal').clientWidth, side: {} });
-  await carSide(c, d, month);
+  const c = (car = { dx: 0, w: $('#cal').clientWidth, week: ui.view === 'week', side: {} });
+  await carSide(c, d, key);
   return carRelease(c, d, -d * 1.4);
 }
 function monthSwipeInit() {
   const cal = $('#cal');
   let g = null;
   cal.addEventListener('touchstart', (e) => {
-    if (!S?.web || ui.card || ui.how === 'open' || car || e.touches.length > 1 || ui.view === 'week') return;
+    if (!S?.web || ui.card || ui.how === 'open' || car || e.touches.length > 1) return;
     const t = e.touches[0];
     g = { x: t.clientX, y: t.clientY, on: false, tr: tracker(t.clientX, t.clientY) };
   }, { passive: true });
-  // Pasivo: .cal tiene touch-action: none, así que el navegador no hace nada con el dedo y no hay que esperar a JS
+  // Pasivo: el mes tiene touch-action: none y la semana pan-y (el scroll vertical de las horas es del navegador)
   cal.addEventListener('touchmove', (e) => {
     if (!g) return;
     if (pdrag) return (g = null); // arrastrando una barra
+    if (e.touches.length > 1) { // segundo dedo: es un pellizco, el carrusel vuelve a su sitio
+      const s = g;
+      g = null;
+      if (s.on) carRelease(s.c, 0, 0);
+      return;
+    }
     const t = e.touches[0];
     const dx = t.clientX - g.x, dy = t.clientY - g.y;
     g.tr.add(t.clientX, t.clientY);
     if (!g.on) {
-      if (Math.abs(dx) < 8 || Math.abs(dx) < Math.abs(dy)) { if (Math.abs(dy) > 14) g = null; return; }
+      if (Math.abs(dx) < 8 || Math.abs(dx) < Math.abs(dy) * 1.2) { if (Math.abs(dy) > 12) g = null; return; }
       g.on = true;
+      g.x = t.clientX; // arranca desde donde está el dedo, sin salto
       clearTimeout(press);
       clearTimeout(holdT);
-      g.c = car = { dx: 0, w: cal.clientWidth, side: {} };
+      g.c = car = { dx: 0, w: cal.clientWidth, week: ui.view === 'week', side: {} };
       carSide(g.c, 1);
       carSide(g.c, -1);
     }
-    g.c.dx = dx;
+    g.c.dx = t.clientX - g.x;
     carMove(g.c);
   }, { passive: true });
   const end = () => {
@@ -1299,6 +1335,66 @@ function monthSwipeInit() {
   };
   cal.addEventListener('touchend', end, { passive: true });
   cal.addEventListener('touchcancel', end, { passive: true });
+  wkPinchInit(cal);
+}
+// Semana: pellizcar cambia el alto de las horas; lo que queda entre los dedos se queda bajo los dedos
+function wkPinchInit(cal) {
+  let p = null;
+  const dist = (t) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+  const midY = (t) => (t[0].clientY + t[1].clientY) / 2;
+  cal.addEventListener('touchstart', (e) => {
+    if (ui.view !== 'week' || e.touches.length !== 2 || ui.card) return;
+    const grid = $('#weeks .wk-grid'), body = $('#weeks .wk-body');
+    if (!grid || !body) return;
+    clearTimeout(press);
+    const ppm = +grid.dataset.ppm, top = body.getBoundingClientRect().top;
+    p = { d0: dist(e.touches), z0: wkZoom(), z: wkZoom(), fit: ppm / wkZoom(), grid, body, top, at: (body.scrollTop + midY(e.touches) - top) / ppm };
+  }, { passive: true });
+  // No pasivo solo aquí, y solo actúa con dos dedos: que el navegador no desplace mientras pellizcas
+  cal.addEventListener('touchmove', (e) => {
+    if (!p || e.touches.length !== 2) return;
+    e.preventDefault();
+    wkZoomTo(p, (p.z0 * dist(e.touches)) / p.d0, midY(e.touches));
+  }, { passive: false });
+  const end = (e) => {
+    if (!p || e.touches.length >= 2) return;
+    const z = p.z;
+    p = null;
+    quietClick(250);
+    wkZoomSave(z);
+  };
+  cal.addEventListener('touchend', end, { passive: true });
+  cal.addEventListener('touchcancel', end, { passive: true });
+  cal.addEventListener('gesturestart', (e) => e.preventDefault()); // Safari: que no amplíe la página
+  // En el PC: Ctrl + rueda (o pellizcar en el touchpad) sobre las horas
+  let wz = null, wzT;
+  cal.addEventListener('wheel', (e) => {
+    if (ui.view !== 'week' || !e.ctrlKey || !e.target.closest('.wk-body')) return;
+    e.preventDefault();
+    const grid = $('#weeks .wk-grid'), body = $('#weeks .wk-body');
+    if (!wz) {
+      const ppm = +grid.dataset.ppm, top = body.getBoundingClientRect().top;
+      wz = { z: wkZoom(), fit: ppm / wkZoom(), grid, body, top, at: (body.scrollTop + e.clientY - top) / ppm };
+    }
+    wkZoomTo(wz, wz.z * Math.exp(-e.deltaY * 0.004), e.clientY);
+    clearTimeout(wzT);
+    wzT = setTimeout(() => { const z = wz.z; wz = null; wkZoomSave(z); }, 220);
+  }, { passive: false });
+}
+function wkZoomTo(p, z, y) {
+  p.z = Math.min(4, Math.max(1, z));
+  const ppm = p.fit * p.z;
+  p.grid.style.setProperty('--ppm', ppm);
+  p.grid.dataset.ppm = ppm;
+  p.body.scrollTop = p.at * ppm - (y - p.top);
+}
+function wkZoomSave(z) {
+  if (Math.abs(z - wkZoom()) < 0.001) return;
+  ui.wkZoom = z;
+  try { localStorage.setItem('wkZoom', z.toFixed(3)); } catch {}
+  const body = $('#weeks .wk-body'), keep = body?.scrollTop;
+  renderCal(); // recoloca lo fino (una línea) o lo alto según el nuevo tamaño
+  if (body) body.scrollTop = keep;
 }
 
 // --- Vista de un día: a los lados, el día anterior y el siguiente (mismo carrusel) ---
@@ -1341,20 +1437,20 @@ async function dayRelease(c, go, vx, date) {
   const anims = glide([[inner, 0], [c.side[1], w], [c.side[-1], -w]], c.dx, go ? -go * w : 0, vx);
   await anims[0].finished;
   if (go && ui.card?.type === 'day') {
+    const from = ui.card.date;
     ui.card = { ...ui.card, date: to };
     history.replaceState({ ...navCur(), scr: { k: 'card', v: pageOf(ui.card) } }, '');
-    // El vecino que ha entrado ya tiene el día pintado: se pasa su contenido tal cual (sin volver a maquetar)
-    const inc = c.side[go];
-    [inner.innerHTML, inc.innerHTML] = [inc.innerHTML, inner.innerHTML];
-    inc.dataset.date = addDays(to, -go) === inc.dataset.date ? inc.dataset.date : '';
-    inner.scrollTop = 0;
-    // El que estaba en pantalla queda como vecino del otro lado
-    const back = c.side[-go];
-    [back.innerHTML, inc.innerHTML] = [inc.innerHTML, back.innerHTML];
-    back.dataset.date = addDays(to, -go) === addDays(to, -go) && !date ? addDays(to, -go) : '';
+    // Los nodos se mueven tal cual (sin volver a pintar): el vecino que ha entrado pasa a ser el día en pantalla
+    // y el que estaba queda al otro lado (prepDays repinta lo que no encaje)
+    const inc = c.side[go], back = c.side[-go];
+    const old = [...inner.childNodes];
+    inner.replaceChildren(...inc.childNodes);
+    back.replaceChildren(...old);
+    back.dataset.date = from;
     inc.dataset.date = '';
+    inner.scrollTop = 0;
   }
-  for (const d of [1, -1]) c.side[d].style.transform = tx(d * w * 2);
+  for (const d of [1, -1]) c.side[d].style.transform = tx(d * w);
   inner.style.transform = '';
   anims.forEach((a) => a.cancel());
   if (dcar === c) dcar = null;
@@ -1376,7 +1472,7 @@ function stepDay(n, date) {
     if (!S?.web || ui.card?.type !== 'day' || dcar || e.touches.length > 1 || e.target.closest('input, textarea, select')) return;
     const t = e.touches[0];
     if (navigator.standalone && t.clientX < 18) return; // es el gesto de atrás
-    g = { x: t.clientX, y: t.clientY, on: false, tr: tracker(t.clientX, t.clientY) };
+    g = { x: t.clientX, y: t.clientY, on: false, tr: tracker(t.clientX, t.clientY), strip: !!e.target.closest('.df-strip') };
   }, { passive: true });
   // Pasivo: el contenido tiene touch-action: pan-y (el scroll vertical es nativo y el horizontal es nuestro)
   card.addEventListener('touchmove', (e) => {
@@ -1384,23 +1480,30 @@ function stepDay(n, date) {
     const t = e.touches[0];
     const dx = t.clientX - g.x, dy = t.clientY - g.y;
     g.tr.add(t.clientX, t.clientY);
+    if (g.strip) return void (g.dx = dx, g.dy = dy); // la tira cambia de semana al soltar
     if (!g.on) {
       if (Math.abs(dx) < 10 || Math.abs(dx) < Math.abs(dy) * 1.2) { if (Math.abs(dy) > 12) g = null; return; }
       g.on = true;
+      g.x = t.clientX; // sin salto al engancharse: arranca desde donde está el dedo
       clearTimeout(press);
+      clearTimeout(prepDays.t);
       g.c = dcar = { dx: 0, w: card.clientWidth, side: {} };
       dayNeighbor(g.c, 1);
       dayNeighbor(g.c, -1);
     }
     const c = g.c;
-    c.dx = dx;
-    $('#card .card-in:not(.nb)').style.transform = tx(dx);
-    c.side[1].style.transform = tx(dx + c.w + PAGE_GAP);
-    c.side[-1].style.transform = tx(dx - c.w - PAGE_GAP);
+    c.dx = t.clientX - g.x;
+    dayMain().style.transform = tx(c.dx);
+    c.side[1].style.transform = tx(c.dx + c.w + PAGE_GAP);
+    c.side[-1].style.transform = tx(c.dx - c.w - PAGE_GAP);
   }, { passive: true });
   const end = () => {
     const s = g;
     g = null;
+    if (s?.strip) {
+      if (Math.abs(s.dx || 0) > 40 && Math.abs(s.dx) > Math.abs(s.dy) * 1.5) (quietClick(), stepDay(-Math.sign(s.dx) * 7, addDays(ui.card.date, -Math.sign(s.dx) * 7)));
+      return;
+    }
     if (!s?.on) return;
     quietClick();
     const [vx] = s.tr.v();
@@ -2318,7 +2421,10 @@ function popCheck(el, done) {
 const actions = {
   month: (el) => changeMonth(+el.dataset.d),
   today: () => {
-    if (ui.view === 'week') { const d = S.today < ui.weekStart ? -1 : 1; ui.weekStart = mondayOf(S.today); ui.month = S.today.slice(0, 8) + '01'; return goWeekOrMonth(d); }
+    if (ui.view === 'week') {
+      const d = S.today < ui.weekStart ? -1 : 1;
+      if (S.web && mondayOf(S.today) !== ui.weekStart) return carGo(mondayOf(S.today), d);
+      ui.weekStart = mondayOf(S.today); ui.month = S.today.slice(0, 8) + '01'; return goWeekOrMonth(d); }
     return goMonth(S.today.slice(0, 8) + '01', S.today < ui.month ? -1 : 1);
   },
   'toggle-view': () => setView(ui.view === 'week' ? 'month' : 'week'),
@@ -2351,6 +2457,20 @@ const actions = {
   },
   'open-day': (el) => { if (ui.card) return closeCard(); openCard({ type: 'day', date: el.dataset.date }, el); },
   'day-step': (el) => stepDay(+el.dataset.d),
+  'day-jump': (el) => ui.card?.type === 'day' && stepDay(diffDays(ui.card.date, el.dataset.date), el.dataset.date),
+  // «+» de la vista del día: menú con lo que se puede añadir ese día
+  'day-add': (el) => {
+    const date = ui.card?.date;
+    if (!date) return;
+    const r = el.getBoundingClientRect();
+    const swap = (type) => () => actions.swap({ dataset: { type, date } });
+    openCtx(r.right, r.bottom + 4, [
+      { label: 'Bloque', icon: 'layers', run: swap('new-block') },
+      { label: 'Objetivo', icon: 'target', run: swap('new-goal') },
+      { label: 'Examen o entrega', icon: 'cap', run: swap('new-ms') },
+      { label: 'Recordatorio', icon: 'checklist', run: () => actions['day-todo']({ dataset: { date } }) },
+    ]);
+  },
   'day-todo': (el) => {
     const date = el.dataset.date;
     const draft = () => { ui.rm.draft = { parentId: null, afterId: 'end', listId: null, preset: { due: date } }; rmRender('[data-key="td-draft"] .rm-t'); };
