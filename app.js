@@ -3041,6 +3041,7 @@ document.addEventListener('submit', async (e) => {
       const projectId = await ensureProject();
       const b = await run('create_block', { projectId, milestoneId: d.milestoneId || undefined, categoryId: d.categoryId || undefined, blocking: !!d.blocking || undefined, event: d.event ? true : undefined, fixed: d.fixed ? true : undefined, title: d.title, date: d.date, endDate: d.endDate || undefined, start: d.start || undefined, end: d.end || undefined, taskIds });
       toast(b.sumsTo?.length ? `${icon('layers', 14)} Bloque creado · suma a ${b.sumsTo.map(esc).join(', ')}` : `${icon('check', 14)} Bloque creado`, b.sumsTo?.length ? 4500 : 2600);
+      if (b.overlaps?.length) toast(`${icon('clock', 14)} Coincide con ${esc(b.overlaps[0].replace(/ \([^)]*\)$/, ''))}${b.overlaps.length > 1 ? ` y ${b.overlaps.length - 1} más` : ''}`, 5000);
       await refresh();
       swapCard({ type: 'block', id: b.id });
     }
