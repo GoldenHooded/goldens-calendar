@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="es">
+<html lang="es" class="web-root">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
-    <meta name="theme-color" content="#000000" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no, interactive-widget=resizes-content" />
+    <meta name="theme-color" content="#121211" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="Golden&#39;s" />
@@ -16,11 +16,13 @@
   <body class="web">
     <div id="widget">
       <div id="glass"><canvas id="aurora"></canvas></div>
-      <header class="head" id="head"></header>
-      <div class="weekdays" id="weekdays"></div>
-      <div class="cal" id="cal">
-        <div class="dots" id="dots"></div>
-        <div class="weeks" id="weeks"></div>
+      <div id="stage">
+        <header class="head" id="head"></header>
+        <div class="weekdays" id="weekdays"></div>
+        <div class="cal" id="cal">
+          <div class="dots" id="dots"></div>
+          <div class="weeks" id="weeks"></div>
+        </div>
       </div>
       <div class="how" id="how"></div>
       <div class="card" id="card"></div>
@@ -32,6 +34,7 @@
     </div>
     <script src="web.js"></script>
     <script src="icons.js"></script>
+    <script src="dotmatrix.js"></script>
     <script src="app.js"></script>
   </body>
 </html>

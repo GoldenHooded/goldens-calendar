@@ -221,7 +221,7 @@ function renderHead() {
       <button class="ibtn" data-act="month" data-d="1" title="Mes siguiente">${icon('chevR', 16)}</button>
       ${ui.month !== S.today.slice(0, 8) + '01' ? `<button class="ibtn" data-act="today" title="Volver a hoy">${icon('cal', 15)}</button>` : ''}
     </div>
-    ${S.web ? '' : `<button class="layer-pill ${activeLayer() ? 'on' : ''}" data-act="layer-menu" title="Capas">${icon('layers', 13)} ${esc(activeLayer()?.name || 'Todo')}</button>
+    ${S.web ? '' : `${layerWheel()}
     <button class="ibtn rm-go" data-act="rm-go" title="Recordatorios (R)">${icon('checklist', 15)}${rmCount().today ? `<span class="badge">${rmCount().today}</span>` : ''}</button>
     ${ui.layerMenu ? layerMenu() : ''}`}`);
   $('#weekdays').innerHTML = ['L', 'M', 'X', 'J', 'V', 'S', 'D'].map((d) => `<div>${d}</div>`).join('');
@@ -233,13 +233,69 @@ function renderDock() {
   if (!el) {
     el = document.createElement('div');
     el.id = 'dock';
-    $('#widget').appendChild(el);
+    ($('#stage') || $('#widget')).appendChild(el); // dentro del escenario: se encoge con él al abrir una hoja
   }
   const n = rmCount().today;
-  morph(el, `<button class="layer-pill dock-layer ${activeLayer() ? 'on' : ''}" data-act="layer-menu" data-key="dock-layer" title="Capas">${icon('layers', 20)}<span>${esc(activeLayer()?.name || 'Todo')}</span></button>
-    <button class="dock-rm" data-act="rm-go" data-key="dock-rm" title="Recordatorios">${icon('checklist', 22)}${n ? `<span class="badge">${n}</span>` : ''}</button>
+  morph(el, `<button class="layer-pill dock-btn dock-layer ${activeLayer() ? 'on' : ''}" data-act="layer-menu" data-key="dock-layer" title="Capas">${icon('layers', 20)}<span>${esc(activeLayer()?.name || 'Todo')}</span></button>
+    <button class="dock-btn dock-how ${ui.fresh ? 'fresh' : ''}" data-act="how-open" data-key="dock-how">${ui.fresh ? '<span class="dot"></span>' : icon('sun', 20)}<span>¿Cómo vas?</span></button>
+    <button class="dock-btn dock-rm" data-act="rm-go" data-key="dock-rm" title="Recordatorios" aria-label="Recordatorios">${icon('checklist', 22)}${n ? `<span class="badge">${n}</span>` : ''}</button>
     ${ui.layerMenu ? layerMenu() : ''}`);
 }
+
+// Botón de capas: la rueda del ratón gira entre capas (el nombre rueda y el botón cambia de ancho sin saltos)
+const layerOrder = () => ['all', ...(S.db.layers || []).map((l) => l.id)];
+const layerName = (id) => (id === 'all' ? 'Todo' : byId(S.db.layers || [], id)?.name || 'Todo');
+function layerWheel() {
+  return `<div class="layer-wheel" data-key="lwheel" title="Capas · gira la rueda del ratón para cambiar">
+    <button class="layer-pill ${activeLayer() ? 'on' : ''}" data-act="layer-menu">${icon('layers', 13)} <span class="lp-name"><span class="lp-t">${esc(layerName(ui.layer))}</span></span></button></div>`;
+}
+const ROLL = 'cubic-bezier(0.22, 1, 0.36, 1)';
+// Cambia de capa con animación: el nombre viejo sale por un lado, el nuevo entra por el otro y el ancho se ajusta suave
+function rollLayer(id, d) {
+  const box0 = $('.layer-wheel .lp-name');
+  const w0 = box0?.getBoundingClientRect().width;
+  const old = $('.lp-t', box0 || document)?.textContent;
+  $$('.layer-wheel .lp-ghost').forEach((g) => g.remove());
+  ui.layer = id;
+  ui.layerMenu = false;
+  localStorage.setItem('layer', ui.layer);
+  renderHead();
+  const box = $('.layer-wheel .lp-name');
+  const t = box && $('.lp-t', box);
+  if (!t || !w0 || old === t.textContent) return;
+  const w1 = box.getBoundingClientRect().width;
+  box.getAnimations().forEach((x) => x.cancel());
+  box.animate([{ width: w0 + 'px' }, { width: w1 + 'px' }], { duration: 360, easing: ROLL });
+  const ghost = document.createElement('span');
+  ghost.className = 'lp-ghost';
+  ghost.textContent = old;
+  box.appendChild(ghost);
+  ghost.animate([{ transform: 'translateY(0)', opacity: 1 }, { transform: `translateY(${-d * 14}px)`, opacity: 0 }], { duration: 300, easing: ROLL, fill: 'forwards' }).onfinish = () => ghost.remove();
+  t.animate([{ transform: `translateY(${d * 14}px)`, opacity: 0 }, { transform: 'none', opacity: 1 }], { duration: 360, easing: ROLL });
+}
+function stepLayer(d) {
+  const ids = layerOrder();
+  const j = Math.max(0, ids.indexOf(ui.layer)) + d;
+  if (j < 0 || j >= ids.length) return $('.layer-wheel .layer-pill')?.animate([{ translate: '0 0' }, { translate: `0 ${d * 3}px` }, { translate: '0 0' }], { duration: 300, easing: ROLL }); // tope
+  rollLayer(ids[j], d);
+  clearTimeout(stepLayer.t);
+  stepLayer.t = setTimeout(() => renderCal(), 90); // el calendario se actualiza al parar de girar
+}
+// Rueda (también con el panel táctil): se acumula el desplazamiento y cada «muesca» es una capa
+let layerAcc = 0, wheelLast = 0;
+$('#head').addEventListener('wheel', (e) => {
+  if (!e.target.closest('.layer-wheel')) return;
+  e.preventDefault();
+  e.stopPropagation();
+  const now = performance.now();
+  if (now - wheelLast > 250) layerAcc = 0;
+  wheelLast = now;
+  layerAcc += e.deltaMode === 1 ? e.deltaY * 40 : e.deltaY;
+  if (Math.abs(layerAcc) < 50) return;
+  const d = layerAcc > 0 ? 1 : -1;
+  layerAcc = 0;
+  stepLayer(d);
+}, { passive: false });
 
 const paletteRow = (id, current, kind) => `<div class="palette" data-key="pal-${id}">${PALETTE.map((c, i) => `<button class="${c === current ? 'on' : ''}" style="--c:${c};--n:${i}" data-act="set-color" data-kind="${kind}" data-id="${id}" data-c="${c}"></button>`).join('')}</div>`;
 
@@ -395,7 +451,7 @@ function cardMilestone(id) {
       const tasks = S.db.tasks.filter((t) => t.topicId === tp.id).sort((a, c) => (a.order ?? 0) - (c.order ?? 0));
       const ts = S.stats.topics[tp.id];
       return `<div class="topic ${ui.closed.has(tp.id) ? 'closed' : ''}"><div class="topic-h" data-act="fold" data-id="${tp.id}"><span class="chev">${icon('chevD', 14)}</span><span class="name">${esc(tp.title)}</span><span class="meta">${ts.done}/${ts.total}</span>
-        <button class="ibtn" data-act="del-topic" data-id="${tp.id}" title="Eliminar tema" style="width:22px;height:22px">${icon('trash', 12)}</button></div>
+        <button class="ibtn sm" data-act="del-topic" data-id="${tp.id}" title="Eliminar tema">${icon('trash', 12)}</button></div>
         ${prog('tp-' + tp.id, ts.pct, p.color)}
         <div class="tasks">${tasks.map((t) => taskRow(t, p.color)).join('')}<input class="inline-add" data-key="addt-${tp.id}" data-add="task" data-topic="${tp.id}" placeholder="Añadir subapartado  ↵" /></div></div>`;
     }).join('')}
@@ -619,7 +675,7 @@ function fixCardSize(r) {
 function afterCard() {
   const card = $('#card');
   animateValues(card);
-  setTimeout(() => $('[autofocus]', card)?.focus(), 250);
+  setTimeout(() => $('[autofocus]', card)?.focus(), S.web ? 520 : 250); // en el móvil, cuando la hoja ya ha llegado (el teclado no la empuja a medias)
 }
 function swapCard(v) {
   if (S.web) return swapSheet(v);
@@ -727,37 +783,69 @@ function dayFull(d) {
     <div class="df-hint">Desliza a los lados para cambiar de día · hacia abajo para cerrar</div>`;
 }
 
-// --- Hojas (en el móvil sustituyen a las tarjetas flotantes). Un día ocupa la pantalla entera. ---
-const EASE_OUT = 'cubic-bezier(0.2, 0.9, 0.25, 1)';
+// --- Hojas (en el móvil sustituyen a las tarjetas flotantes). Un día es una hoja de página. ---
+// Movimiento con la curva de las hojas de iOS: sale rápido y frena sin rebote (lo grande nunca rebota:
+// un rebote deja ver lo de debajo). Solo se anima transform y opacity. Ver MOBILE-QUALITY.md.
+const EASE_IOS = 'cubic-bezier(0.32, 0.72, 0, 1)';
+const EASE_AWAY = 'cubic-bezier(0.3, 0, 0.8, 0.6)';
 function sheetDim(on, o) {
   let dim = $('#sheet-dim');
   if (!dim) {
     dim = document.createElement('div');
     dim.id = 'sheet-dim';
-    dim.addEventListener('click', () => closeCard());
+    dim.addEventListener('click', () => (ui.card ? closeCard() : ui.how === 'open' && closeHow()));
     $('#widget').appendChild(dim);
   }
   dim.classList.toggle('on', on);
+  dim.style.transition = o == null ? '' : 'none'; // siguiendo al dedo, sin retraso
   dim.style.opacity = o ?? '';
 }
+// Escenario: con una hoja de página abierta, el calendario se encoge y se redondea detrás, como en iOS
+const pushStage = (on) => document.body.classList.toggle('pushed', on);
+let stageFrom = null;
+// Durante un gesto, el escenario acompaña al dedo (p: 0 = encogido del todo, 1 = en su sitio)
+function stageFollow(p) {
+  const st = $('#stage');
+  if (!st) return;
+  if (!stageFrom) { const m = new DOMMatrix(getComputedStyle(st).transform); stageFrom = { s: m.a, y: m.f }; }
+  st.style.transition = 'none';
+  st.style.transform = `translate3d(0,${stageFrom.y * (1 - p)}px,0) scale(${stageFrom.s + (1 - stageFrom.s) * p})`;
+}
+// Al soltar: vuelve a lo que digan las clases, con su transición
+function stageRelease() {
+  const st = $('#stage');
+  stageFrom = null;
+  if (st) st.style.transition = st.style.transform = '';
+}
+// Posición de un elemento del calendario sin las transformaciones del escenario
+function stageRect(el) {
+  let x = 0, y = 0, n = el;
+  const st = $('#stage');
+  while (n && n !== st) { x += n.offsetLeft; y += n.offsetTop; n = n.offsetParent; }
+  return { left: x, top: y, width: el.offsetWidth, height: el.offsetHeight };
+}
+// Transformación que lleva la hoja al rectángulo r (para crecer desde una casilla o volver a ella)
+const toRect = (r, box) => `translate(${r.left - box.left}px, ${r.top - box.top}px) scale(${r.width / box.width}, ${r.height / box.height})`;
 const sheetInner = (v) => (v.type === 'day' ? dayFull(v.date) : cardHTML(v));
-const cellRect = (d) => $(`.cell[data-date="${d}"]`)?.getBoundingClientRect();
-const clipFrom = (r) => `inset(${r.top}px ${innerWidth - r.right}px ${innerHeight - r.bottom}px ${r.left}px round 16px)`;
 function openSheet(v, anchorEl) {
   const card = $('#card');
   const html = sheetInner(v);
   if (!html) return;
+  const full = v.type === 'day';
+  const from = full && anchorEl?.classList?.contains('cell') ? stageRect(anchorEl) : null;
   ui.card = { ...v, anchor: null };
+  card.getAnimations({ subtree: true }).forEach((a) => a.cancel());
   card.removeAttribute('style');
-  card.className = 'card show sheet' + (v.type === 'day' ? ' full' : '');
-  card.innerHTML = `<div class="sheet-top"><button class="ibtn sheet-back" data-act="card-back">${icon('chevL', 22)}</button><div class="grabber"></div></div><div class="card-in">${html}</div>`;
+  card.className = 'card show sheet' + (full ? ' full' : '');
+  card.innerHTML = `<div class="sheet-top"><button class="ibtn sheet-back" data-act="card-back" title="Atrás">${icon('chevL', 22)}</button><div class="grabber"></div></div><div class="card-in">${html}</div>`;
   sheetDim(true);
-  const r = anchorEl?.getBoundingClientRect?.();
-  if (v.type === 'day' && r?.width) {
-    // El día crece desde su casilla hasta ocupar la pantalla
-    card.animate([{ clipPath: clipFrom(r), opacity: 0.5 }, { clipPath: 'inset(0 0 0 0 round 0px)', opacity: 1 }], { duration: 460, easing: EASE_OUT });
-    $('.card-in', card).animate([{ opacity: 0, transform: `translateY(${Math.max(-60, r.top - 120)}px) scale(0.96)` }, { opacity: 1, transform: 'none' }], { duration: 420, easing: EASE_OUT });
-  } else card.animate([{ transform: 'translateY(100%)' }, { transform: 'none' }], { duration: 420, easing: EASE_OUT });
+  if (full) pushStage(true);
+  if (from) {
+    // El día crece desde su casilla hasta ser una hoja de página
+    const box = card.getBoundingClientRect();
+    card.animate([{ transformOrigin: '0 0', transform: toRect(from, box), opacity: 0 }, { opacity: 1, offset: 0.3 }, { transformOrigin: '0 0', transform: 'none', opacity: 1 }], { duration: 500, easing: EASE_IOS });
+    $('.card-in', card).animate([{ opacity: 0 }, { opacity: 0, offset: 0.25 }, { opacity: 1 }], { duration: 460, easing: 'ease-out' });
+  } else card.animate([{ transform: 'translate3d(0,100%,0)' }, { transform: 'none' }], { duration: 500, easing: EASE_IOS });
   afterCard();
 }
 function swapSheet(v, dir = 0) {
@@ -765,28 +853,34 @@ function swapSheet(v, dir = 0) {
   const html = sheetInner(v);
   if (!html) return closeCard();
   ui.card = { ...v, anchor: null, root: ui.card?.root || (card.classList.contains('full') ? 'day' : null) };
-  const h0 = card.offsetHeight;
+  const top0 = card.getBoundingClientRect().top;
   $('.card-in', card).outerHTML = `<div class="card-in">${html}</div>`;
-  const inner = $('.card-in', card);
-  inner.animate(dir ? [{ opacity: 0, transform: `translateX(${dir * 40}px)` }, { opacity: 1, transform: 'none' }] : [{ opacity: 0, transform: 'translateY(8px)' }, { opacity: 1, transform: 'none' }], { duration: 320, easing: EASE_OUT });
-  const h1 = card.offsetHeight;
-  if (!card.classList.contains('full') && Math.abs(h1 - h0) > 2) card.animate([{ height: h0 + 'px' }, { height: h1 + 'px' }], { duration: 320, easing: EASE_OUT });
+  $('.card-in', card).animate(dir ? [{ opacity: 0, transform: `translate3d(${dir * 40}px,0,0)` }, { opacity: 1, transform: 'none' }] : [{ opacity: 0, transform: 'translate3d(0,8px,0)' }, { opacity: 1, transform: 'none' }], { duration: 340, easing: EASE_IOS });
+  // La hoja cambia de alto: su borde superior viaja de la posición vieja a la nueva (FLIP, sin animar el alto)
+  const dy = top0 - card.getBoundingClientRect().top;
+  if (!card.classList.contains('full') && Math.abs(dy) > 2) card.animate([{ transform: `translate3d(0,${dy}px,0)` }, { transform: 'none' }], { duration: 420, easing: EASE_IOS });
   afterCard();
 }
 function closeSheet(instant, fromY = 0) {
   const card = $('#card');
   const v = ui.card;
   ui.card = null;
-  sheetDim(false);
+  if (ui.how !== 'open') (sheetDim(false), pushStage(false), stageRelease());
   card.classList.remove('has-back');
+  card.getAnimations({ subtree: true }).forEach((a) => a.cancel());
   if (instant) return card.classList.remove('show');
-  const r = v?.type === 'day' && !fromY ? cellRect(v.date) : null;
-  const anim = r
-    ? card.animate([{ clipPath: 'inset(0 0 0 0 round 0px)', opacity: 1 }, { clipPath: clipFrom(r), opacity: 0 }], { duration: 300, easing: 'cubic-bezier(0.4, 0, 0.2, 1)', fill: 'forwards' })
-    : card.animate([{ transform: `translateY(${fromY}px)` }, { transform: 'translateY(105%)' }], { duration: Math.max(140, 260 - fromY * 0.4), easing: 'cubic-bezier(0.3, 0, 0.8, 0.6)', fill: 'forwards' });
+  const cell = v?.type === 'day' && !fromY && $(`.cell[data-date="${v.date}"]`);
+  let anim;
+  if (cell) {
+    // Vuelve a encogerse hacia su casilla
+    const box = card.getBoundingClientRect();
+    $('.card-in', card).animate([{ opacity: 1 }, { opacity: 0 }], { duration: 160, fill: 'forwards' });
+    anim = card.animate([{ transformOrigin: '0 0', transform: 'none', opacity: 1 }, { opacity: 1, offset: 0.55 }, { transformOrigin: '0 0', transform: toRect(stageRect(cell), box), opacity: 0 }], { duration: 420, easing: EASE_IOS, fill: 'forwards' });
+  } else anim = card.animate([{ transform: `translate3d(0,${fromY}px,0)` }, { transform: 'translate3d(0,100%,0)' }], { duration: Math.max(220, 380 - fromY * 0.4), easing: fromY ? EASE_IOS : EASE_AWAY, fill: 'forwards' });
   anim.onfinish = () => {
-    if (!ui.card) card.classList.remove('show');
-    anim.cancel();
+    if (ui.card) return;
+    card.classList.remove('show');
+    card.getAnimations({ subtree: true }).forEach((a) => a.cancel());
   };
 }
 // Cambiar de día dentro de la vista de día (botones o deslizando)
@@ -795,12 +889,12 @@ function stepDay(n, fromX = 0) {
   const date = addDays(ui.card.date, n);
   const inner = $('#card .card-in');
   const w = innerWidth;
-  const out = inner.animate([{ transform: `translate3d(${fromX}px,0,0)`, opacity: 1 - Math.abs(fromX) / w }, { transform: `translate3d(${-n * w * 0.6}px,0,0)`, opacity: 0 }], { duration: 170, easing: 'cubic-bezier(0.3, 0, 0.8, 0.6)', fill: 'forwards' });
+  const out = inner.animate([{ transform: `translate3d(${fromX}px,0,0)`, opacity: 1 - Math.abs(fromX) / w }, { transform: `translate3d(${-n * w * 0.6}px,0,0)`, opacity: 0 }], { duration: 170, easing: EASE_AWAY, fill: 'forwards' });
   out.onfinish = () => {
     ui.card = { ...ui.card, date };
     inner.innerHTML = dayFull(date);
     out.cancel();
-    inner.animate([{ transform: `translate3d(${n * w * 0.45}px,0,0)`, opacity: 0 }, { transform: 'none', opacity: 1 }], { duration: 360, easing: EASE_OUT });
+    inner.animate([{ transform: `translate3d(${n * w * 0.45}px,0,0)`, opacity: 0 }, { transform: 'none', opacity: 1 }], { duration: 380, easing: EASE_IOS });
     inner.scrollTop = 0;
   };
 }
@@ -811,20 +905,30 @@ function tracker(x, y) {
   const pts = [[x, y, performance.now()]];
   return {
     add(x, y) { pts.push([x, y, performance.now()]); if (pts.length > 6) pts.shift(); },
-    v() { const a = pts[0], b = pts[pts.length - 1]; const dt = Math.max(1, b[2] - a[2]); return [(b[0] - a[0]) / dt, (b[1] - a[1]) / dt]; },
+    // Solo cuenta el último instante: si el dedo se paró antes de soltar, no hay lanzamiento
+    v() {
+      const now = performance.now();
+      const r = pts.filter((p) => now - p[2] < 100);
+      if (r.length < 2) return [0, 0];
+      const a = r[0], b = r[r.length - 1], dt = Math.max(1, b[2] - a[2]);
+      return [(b[0] - a[0]) / dt, (b[1] - a[1]) / dt];
+    },
   };
 }
-// Hojas: hacia abajo se cierran (siguiendo al dedo); en la vista de día, a los lados cambian de día
+const quietClick = (ms = 80) => { ui.suppressClick = true; setTimeout(() => (ui.suppressClick = false), ms); };
+// Hojas: hacia abajo se cierran (siguiendo al dedo); en la vista de día, a los lados cambian de día.
+// Los listeners viven en la hoja, no en document: así el resto de la página hace scroll sin esperar a JS.
 (() => {
+  const card = $('#card');
   let g = null;
-  document.addEventListener('touchstart', (e) => {
-    const card = e.target.closest('#card.sheet.show');
-    if (!card || e.touches.length > 1 || e.target.closest('input, textarea, select')) return;
+  card.addEventListener('touchstart', (e) => {
+    if (!S?.web || !card.classList.contains('show') || e.touches.length > 1 || e.target.closest('input, textarea, select')) return;
     const t = e.touches[0];
     const inner = $('.card-in', card);
-    g = { card, inner, x: t.clientX, y: t.clientY, top: e.target.closest('.sheet-top') || (inner?.scrollTop || 0) <= 0, axis: null, tr: tracker(t.clientX, t.clientY), dx: 0, dy: 0 };
+    const full = card.classList.contains('full');
+    g = { inner, full, x: t.clientX, y: t.clientY, top: e.target.closest('.sheet-top') || (inner?.scrollTop || 0) <= 0, axis: null, tr: tracker(t.clientX, t.clientY), dx: 0, dy: 0, h: card.offsetHeight || innerHeight };
   }, { passive: true });
-  document.addEventListener('touchmove', (e) => {
+  card.addEventListener('touchmove', (e) => {
     if (!g) return;
     const t = e.touches[0];
     const dx = t.clientX - g.x, dy = t.clientY - g.y;
@@ -838,10 +942,13 @@ function tracker(x, y) {
     }
     e.preventDefault();
     g.dx = dx;
-    g.dy = Math.max(0, dy);
     if (g.axis === 'y') {
-      g.card.style.transform = `translate3d(0,${g.dy}px,0)`;
-      sheetDim(true, Math.max(0, 1 - g.dy / (g.card.offsetHeight || innerHeight)));
+      // Hacia arriba ofrece resistencia (la hoja se prolonga por debajo: no asoma nada)
+      g.dy = dy > 0 ? dy : -Math.min(28, Math.sqrt(-dy) * 2.2);
+      card.style.transform = `translate3d(0,${g.dy}px,0)`;
+      const p = Math.min(1, Math.max(0, g.dy) / g.h);
+      sheetDim(true, 1 - p);
+      if (g.full) stageFollow(p);
     } else {
       g.inner.style.transform = `translate3d(${dx}px,0,0)`;
       g.inner.style.opacity = 1 - Math.min(0.7, Math.abs(dx) / innerWidth);
@@ -851,23 +958,24 @@ function tracker(x, y) {
     const s = g;
     g = null;
     if (!s?.axis) return;
-    ui.suppressClick = true;
-    setTimeout(() => (ui.suppressClick = false), 80);
+    quietClick();
     const [vx, vy] = s.tr.v();
     if (s.axis === 'y') {
-      s.card.style.transform = '';
-      if (s.dy > 120 || vy > 0.6) return closeSheet(false, s.dy);
+      card.style.transform = '';
+      if (s.dy > Math.min(140, s.h * 0.3) || (vy > 0.5 && s.dy > 10)) return closeSheet(false, s.dy);
+      // Vuelve a su sitio frenando, sin rebote
+      card.animate([{ transform: `translate3d(0,${s.dy}px,0)` }, { transform: 'none' }], { duration: 420, easing: EASE_IOS });
       sheetDim(true);
-      s.card.animate([{ transform: `translate3d(0,${s.dy}px,0)` }, { transform: 'none' }], { duration: 380, easing: SPRING });
+      if (s.full) stageRelease();
     } else {
       s.inner.style.transform = '';
       s.inner.style.opacity = '';
       if (Math.abs(s.dx) > innerWidth * 0.25 || Math.abs(vx) > 0.5) return stepDay(s.dx < 0 ? 1 : -1, s.dx);
-      s.inner.animate([{ transform: `translate3d(${s.dx}px,0,0)` }, { transform: 'none' }], { duration: 380, easing: SPRING });
+      s.inner.animate([{ transform: `translate3d(${s.dx}px,0,0)` }, { transform: 'none' }], { duration: 380, easing: EASE_IOS });
     }
   };
-  document.addEventListener('touchend', end, { passive: true });
-  document.addEventListener('touchcancel', end, { passive: true });
+  card.addEventListener('touchend', end, { passive: true });
+  card.addEventListener('touchcancel', end, { passive: true });
 })();
 
 // El mes sigue al dedo: suéltalo con fuerza (o pasada la cuarta parte) y entra el siguiente
@@ -910,7 +1018,7 @@ function monthSwipeInit() {
     weeks.style.transform = weeks.style.opacity = '';
     $('#mname').style.transform = '';
     if (Math.abs(s.dx) < s.w * 0.22 && Math.abs(vx) < 0.45) {
-      weeks.animate([{ transform: `translate3d(${s.dx}px,0,0)`, opacity: op }, { transform: 'none', opacity: 1 }], { duration: 420, easing: SPRING });
+      weeks.animate([{ transform: `translate3d(${s.dx}px,0,0)`, opacity: op }, { transform: 'none', opacity: 1 }], { duration: 420, easing: EASE_IOS });
       return;
     }
     const dir = s.dx < 0 ? 1 : -1;
@@ -918,31 +1026,32 @@ function monthSwipeInit() {
     m.setMonth(m.getMonth() + dir);
     const month = iso(m);
     const next = api.state((() => { const keep = ui.month; ui.month = month; const r = gridRange(); ui.month = keep; return r; })());
-    const out = weeks.animate([{ transform: `translate3d(${s.dx}px,0,0)`, opacity: op }, { transform: `translate3d(${-dir * s.w}px,0,0)`, opacity: 0 }], { duration: Math.max(110, 220 - Math.abs(vx) * 60), easing: 'cubic-bezier(0.3, 0, 0.8, 0.6)', fill: 'forwards' });
+    const out = weeks.animate([{ transform: `translate3d(${s.dx}px,0,0)`, opacity: op }, { transform: `translate3d(${-dir * s.w}px,0,0)`, opacity: 0 }], { duration: Math.max(110, 220 - Math.abs(vx) * 60), easing: EASE_AWAY, fill: 'forwards' });
     const [st] = await Promise.all([next, out.finished]);
     ui.month = month;
     S = st;
     renderHead();
     renderCal(dir, false);
     out.cancel();
-    weeks.animate([{ transform: `translate3d(${dir * s.w * 0.45}px,0,0)`, opacity: 0 }, { transform: 'none', opacity: 1 }], { duration: 420, easing: EASE_OUT });
-    $('#mname').animate([{ transform: `translateX(${dir * 14}px)`, opacity: 0 }, { transform: 'none', opacity: 1 }], { duration: 380, easing: EASE_OUT });
+    weeks.animate([{ transform: `translate3d(${dir * s.w * 0.45}px,0,0)`, opacity: 0 }, { transform: 'none', opacity: 1 }], { duration: 420, easing: EASE_IOS });
+    $('#mname').animate([{ transform: `translateX(${dir * 14}px)`, opacity: 0 }, { transform: 'none', opacity: 1 }], { duration: 380, easing: EASE_IOS });
   };
   cal.addEventListener('touchend', end, { passive: true });
   cal.addEventListener('touchcancel', end, { passive: true });
 }
 
-// Paneles a pantalla completa: desde el borde izquierdo se vuelve atrás; hacia abajo (arriba del todo) se cierran
+// Panel (hoja de página): desde el borde izquierdo se vuelve atrás; hacia abajo (arriba del todo) se cierra.
+// Abrir y cerrar es una transición de CSS sobre transform; el gesto solo la sustituye mientras dura.
 (() => {
+  const how = $('#how');
   let g = null;
-  document.addEventListener('touchstart', (e) => {
-    const how = e.target.closest('#how.open');
-    if (!how || !S?.web || e.touches.length > 1) return;
+  how.addEventListener('touchstart', (e) => {
+    if (!S?.web || ui.how !== 'open' || e.touches.length > 1) return;
     const t = e.touches[0];
     const body = $('.how-body', how);
-    g = { how, x: t.clientX, y: t.clientY, edge: t.clientX < 30, top: body.scrollTop <= 0 && !e.target.closest('.rm-row, input, textarea, select'), axis: null, tr: tracker(t.clientX, t.clientY), dx: 0, dy: 0 };
+    g = { x: t.clientX, y: t.clientY, edge: t.clientX < 24, top: body.scrollTop <= 0 && !e.target.closest('.rm-row, input, textarea, select'), axis: null, tr: tracker(t.clientX, t.clientY), dx: 0, dy: 0, h: how.offsetHeight || innerHeight };
   }, { passive: true });
-  document.addEventListener('touchmove', (e) => {
+  how.addEventListener('touchmove', (e) => {
     if (!g) return;
     const t = e.touches[0];
     const dx = t.clientX - g.x, dy = t.clientY - g.y;
@@ -952,45 +1061,50 @@ function monthSwipeInit() {
       if (g.edge && dx > 0 && Math.abs(dx) > Math.abs(dy)) g.axis = 'x';
       else if (g.top && dy > 0 && Math.abs(dy) > Math.abs(dx) * 1.2) g.axis = 'y';
       else return (g = null);
+      clearTimeout(press);
     }
     e.preventDefault();
     g.dx = Math.max(0, dx);
     g.dy = Math.max(0, dy);
-    g.how.style.transition = 'none';
-    g.how.style.transform = g.axis === 'x' ? `translate3d(${g.dx}px,0,0)` : `translate3d(0,${g.dy}px,0)`;
-    g.how.style.borderRadius = Math.min(24, (g.axis === 'x' ? g.dx : g.dy) / 6) + 'px';
+    how.style.transition = 'none';
+    how.style.transform = g.axis === 'x' ? `translate3d(${g.dx}px,0,0)` : `translate3d(0,${g.dy}px,0)`;
+    if (g.axis === 'y') {
+      const p = Math.min(1, g.dy / g.h);
+      sheetDim(true, 1 - p);
+      stageFollow(p);
+    }
   }, { passive: false });
   const end = () => {
     const s = g;
     g = null;
     if (!s?.axis) return;
-    ui.suppressClick = true;
-    setTimeout(() => (ui.suppressClick = false), 80);
+    quietClick();
     const [vx, vy] = s.tr.v();
-    const from = s.how.style.transform;
-    s.how.style.transform = s.how.style.borderRadius = s.how.style.transition = '';
-    const d = s.axis === 'x' ? s.dx : s.dy;
-    const go = s.axis === 'x' ? d > innerWidth * 0.3 || vx > 0.5 : d > 130 || vy > 0.6;
-    if (!go) return s.how.animate([{ transform: from }, { transform: 'none' }], { duration: 380, easing: SPRING });
-    const to = s.axis === 'x' ? `translate3d(${innerWidth}px,0,0)` : `translate3d(0,${innerHeight}px,0)`;
-    const back = s.axis === 'x' && (ui.howView !== 'summary' || ui.rm.list);
-    const a = s.how.animate([{ transform: from }, { transform: to }], { duration: 220, easing: 'cubic-bezier(0.3, 0, 0.8, 0.6)', fill: 'forwards' });
+    if (s.axis === 'y') {
+      // Con la transición de la hoja otra vez activa, quitar el desplazamiento la lleva a su sitio o la cierra
+      how.style.transition = how.style.transform = '';
+      if (s.dy > Math.min(160, s.h * 0.3) || (vy > 0.5 && s.dy > 10)) return closeHow();
+      sheetDim(true);
+      return stageRelease();
+    }
+    if (s.dx < innerWidth * 0.3 && vx < 0.5) return (how.style.transition = how.style.transform = '');
+    // Borde izquierdo: atrás (o cerrar, si ya estás en la primera pantalla)
+    const back = ui.howView !== 'summary' || ui.rm.list;
+    if (!back) (sheetDim(false), pushStage(false), stageRelease());
+    const a = how.animate([{ transform: `translate3d(${s.dx}px,0,0)` }, { transform: `translate3d(${innerWidth}px,0,0)` }], { duration: 200, easing: EASE_AWAY, fill: 'forwards' });
     a.onfinish = () => {
+      how.style.transform = '';
       if (back) {
         if (ui.howView === 'todo' && ui.rm.list) actions['rm-open']({ dataset: { l: '' } });
         else openHow('summary');
-        a.cancel();
-        s.how.animate([{ transform: 'translate3d(-30%,0,0)', opacity: 0.4 }, { transform: 'none', opacity: 1 }], { duration: 360, easing: EASE_OUT });
-      } else {
-        s.how.classList.add('no-anim');
-        closeHow();
-        a.cancel();
-        requestAnimationFrame(() => s.how.classList.remove('no-anim'));
-      }
+        how.animate([{ transform: 'translate3d(-30%,0,0)', opacity: 0.4 }, { transform: 'none', opacity: 1 }], { duration: 380, easing: EASE_IOS });
+      } else closeHow(); // sin transición: ya está fuera de la pantalla
+      a.cancel();
+      requestAnimationFrame(() => (how.style.transition = ''));
     };
   };
-  document.addEventListener('touchend', end, { passive: true });
-  document.addEventListener('touchcancel', end, { passive: true });
+  how.addEventListener('touchend', end, { passive: true });
+  how.addEventListener('touchcancel', end, { passive: true });
 })();
 
 // ================= Recordatorios: el //TODO general, estilo iPhone, con sangría sin límite =================
@@ -1489,7 +1603,7 @@ function howSummary() {
 let memCache = null;
 // Cabecera común de las pantallas del panel: volver, título y pestañas Organizar / Ajustes
 function howHead(title) {
-  return `<div class="how-top"><div style="display:flex;align-items:center;gap:6px"><button class="ibtn" data-act="how-view" data-v="summary" title="Volver">${icon('chevL', 17)}</button><div class="greet" style="font-size:24px">${title}</div></div>
+  return `<div class="how-top hh"><div style="display:flex;align-items:center;gap:6px"><button class="ibtn" data-act="how-view" data-v="summary" title="Volver">${icon('chevL', 17)}</button><div class="greet" style="font-size:24px">${title}</div></div>
       <div style="display:flex;align-items:center;gap:8px"><div class="seg" data-seg="howtab">${[['organize', 'Organizar'], ['settings', 'Ajustes']].map(([v, l]) => `<button type="button" class="${ui.howView === v ? 'on' : ''}" data-act="how-view" data-v="${v}">${l}</button>`).join('')}</div>
       <button class="ibtn" data-act="how-close" title="Cerrar">${icon('x', 16)}</button></div></div>`;
 }
@@ -1656,8 +1770,9 @@ function openHow(view = 'summary') {
   if (view === 'todo' && ui.howView !== 'todo') (ui.rm.draft = null), (ui.rm.detail = null);
   ui.how = 'open';
   ui.howView = view;
-  if (ui.fresh) { ui.fresh = false; api.briefingSeen(); }
+  if (ui.fresh) { ui.fresh = false; api.briefingSeen(); if (S.web) renderDock(); }
   renderHow();
+  if (S.web) (sheetDim(true), pushStage(true)); // hoja de página: el calendario se encoge detrás
   if (view === 'summary' && S.account.ok && !(S.db.meta.briefingDate === S.today && S.db.meta.briefingText) && !aiLoading) {
     aiLoading = true;
     renderHow();
@@ -1665,12 +1780,16 @@ function openHow(view = 'summary') {
   }
   if (view === 'settings') { api.memories().then((m) => { memCache = m; renderHow(); }); if (S.cloud?.email) loadMcp(); }
 }
-function closeHow() { ui.how = 'idle'; renderHow(); }
+function closeHow() {
+  ui.how = 'idle';
+  if (S?.web) (sheetDim(false), pushStage(false), stageRelease());
+  renderHow();
+}
 
 // Proximidad: la barrita se convierte en botón cuando el cursor se acerca
 document.addEventListener('mousemove', (e) => {
   magnetDots(e);
-  if (ui.how === 'open') return;
+  if (ui.how === 'open' || S?.web) return; // en el móvil, «¿Cómo vas?» es un botón del dock
   const w = $('#widget').getBoundingClientRect();
   const near = Math.hypot(e.clientX - (w.left + w.width / 2), (e.clientY - (w.top + 10)) * 1.8) < 120;
   if (near !== (ui.how === 'near')) { ui.how = near ? 'near' : 'idle'; renderHow(false); }
@@ -1710,12 +1829,61 @@ function md(text) {
   }
   return out + (list ? '</ul>' : '');
 }
+
+// ---------- Puntitos del agente: una animación distinta según lo que esté haciendo ----------
+// Usa las animaciones de «dot/matrix» (MIT, ver dotmatrix.js): en reposo Sparkle, al acercarte Inner Twinkle,
+// con la barra abierta Listening (Caret mientras escribes), pensando Thinking, usando herramientas Cipher,
+// y al terminar Verify (✓) o Halt si falla. Al cambiar de estado se funden de una a otra.
+const agentDots = (() => {
+  let box = null, cur = null, curColor = '', temp = null, tempT = 0, hover = false;
+  const base = () => (ui.busy ? 'think' : ui.agentOpen ? ($('#agent-in')?.value.trim() ? 'typing' : 'listen') : hover ? 'hover' : 'idle');
+  const src = (k, color) => 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(DOTMATRIX[k].replaceAll('#ffffff', color));
+  function show() {
+    if (!box) return;
+    const k = temp || base();
+    const color = getComputedStyle(box).color;
+    if (k === cur && color === curColor) return;
+    const sameState = k === cur;
+    cur = k;
+    curColor = color;
+    const img = new Image();
+    img.className = 'dm';
+    img.alt = '';
+    img.src = src(k, color);
+    const old = [...box.children];
+    box.appendChild(img);
+    if (sameState) return old.forEach((o) => o.remove()); // solo cambia el color: sin fundido
+    img.animate([{ opacity: 0, transform: 'scale(0.85)' }, { opacity: 1, transform: 'none' }], { duration: 260, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' });
+    old.forEach((o) => (o.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 200, fill: 'forwards' }).onfinish = () => o.remove()));
+  }
+  return {
+    mount(el) {
+      box = el;
+      const host = el.closest('#agent');
+      host.addEventListener('mouseenter', () => ((hover = true), show()));
+      host.addEventListener('mouseleave', () => ((hover = false), show()));
+      show();
+    },
+    sync() { show(); setTimeout(show, 320); }, // tras la transición de color al abrir/cerrar
+    flash(k, ms) {
+      temp = k;
+      clearTimeout(tempT);
+      tempT = setTimeout(() => ((temp = null), show()), ms);
+      show();
+    },
+    kick() { show(); },
+  };
+})();
+
 function renderAgent() {
   const el = $('#agent');
   if (!el.firstChild) {
-    el.innerHTML = `<div class="spark">${icon('spark', 19)}</div><input id="agent-in" placeholder="Pídeme algo: «examen de Química el 20, temas 1 a 4»" /><button class="send" data-act="agent-send">${icon('send', 15)}</button>`;
+    el.innerHTML = `<div class="spark"></div><input id="agent-in" placeholder="Pídeme algo: «examen de Química el 20, temas 1 a 4»" /><button class="send" data-act="agent-send">${icon('send', 15)}</button>`;
+    agentDots.mount($('.spark', el));
     const inp = $('#agent-in');
+    inp.addEventListener('input', () => agentDots.kick());
     inp.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowUp' || e.key === 'ArrowDown') { e.preventDefault(); return histStep(inp, e.key === 'ArrowUp' ? -1 : 1); }
       if (e.key === 'Enter') { e.preventDefault(); sendAgent(); }
       if (e.key === 'Escape') { e.stopPropagation(); closeAgent(); }
     });
@@ -1723,6 +1891,31 @@ function renderAgent() {
   }
   el.classList.toggle('open', ui.agentOpen);
   el.classList.toggle('busy', ui.busy);
+  agentDots.sync();
+}
+// Historial de lo que le has pedido: ↑ y ↓ lo recorren, como en un terminal
+const hist = { list: (() => { try { return JSON.parse(localStorage.getItem('agent-hist') || '[]'); } catch { return []; } })(), i: null, draft: '' };
+function histStep(inp, d) {
+  if (!hist.list.length) return;
+  if (hist.i === null) {
+    if (d > 0) return;
+    hist.draft = inp.value;
+    hist.i = hist.list.length;
+  }
+  hist.i += d;
+  if (hist.i < 0) hist.i = 0;
+  if (hist.i >= hist.list.length) {
+    hist.i = null;
+    inp.value = hist.draft;
+  } else inp.value = hist.list[hist.i];
+  requestAnimationFrame(() => inp.setSelectionRange(inp.value.length, inp.value.length));
+}
+function histPush(text) {
+  hist.i = null;
+  hist.draft = '';
+  if (hist.list[hist.list.length - 1] !== text) hist.list.push(text);
+  hist.list = hist.list.slice(-50);
+  try { localStorage.setItem('agent-hist', JSON.stringify(hist.list)); } catch {}
 }
 function openAgent() {
   ui.agentOpen = true;
@@ -1763,6 +1956,7 @@ async function sendAgent() {
   const inp = $('#agent-in');
   const text = inp.value.trim();
   if (!text || ui.busy) return;
+  histPush(text);
   if (!S.account.ok) { toast('Inicia sesión en Claude para usar el agente'); return openHow('settings'); }
   inp.value = '';
   ui.busy = true;
@@ -1771,12 +1965,14 @@ async function sendAgent() {
   showReply();
   const res = await api.chat(text, agentContext());
   ui.busy = false;
+  agentDots.flash(res.error ? 'error' : 'done', 2200);
   ui.reply = { text: res.error ? (res.error === 'NOAUTH' ? 'Tu sesión de Claude ha caducado. Ve a Ajustes → Iniciar sesión.' : '⚠️ ' + res.error) : res.text, tools: ui.reply?.tools || [] };
   renderAgent();
   showReply();
   if (res.changed) refresh();
 }
 api.onAIEvent((ev) => {
+  if (ev.type === 'tool') agentDots.flash('tool', 1400);
   if (ev.type !== 'tool' || !ui.reply || !TOOL_LABEL[ev.name]) return;
   if (!ui.reply.tools.includes(ev.name)) { ui.reply.tools.push(ev.name); showReply(); }
 });
@@ -1874,10 +2070,9 @@ const actions = {
   },
   'layer-menu': (_el, e) => { e.stopPropagation(); ui.layerMenu = !ui.layerMenu; renderHead(); },
   'set-layer': (el) => {
-    ui.layer = el.dataset.id;
-    ui.layerMenu = false;
-    localStorage.setItem('layer', ui.layer);
-    renderHead();
+    const ids = layerOrder();
+    if (S.web) { ui.layer = el.dataset.id; ui.layerMenu = false; localStorage.setItem('layer', ui.layer); renderHead(); }
+    else rollLayer(el.dataset.id, ids.indexOf(el.dataset.id) < ids.indexOf(ui.layer) ? -1 : 1);
     renderCal(1);
     toast(`${icon('layers', 14)} ${esc(activeLayer()?.name || 'Todo')}`);
   },
@@ -2046,7 +2241,7 @@ document.addEventListener('click', (e) => {
     return;
   }
   if (e.target.closest('#agent') && !ui.agentOpen) return openAgent();
-  if (e.target.closest('#how') && ui.how !== 'open' && (ui.how === 'near' || document.body.classList.contains('web'))) return openHow();
+  if (e.target.closest('#how') && ui.how === 'near') return openHow();
   if (ui.reply && !e.target.closest('#reply, #agent')) hideReply();
   if (ui.layerMenu && !e.target.closest('.layer-menu, .layer-pill')) { ui.layerMenu = false; renderHead(); }
   if (ui.card && !e.target.closest('#card, #how')) return closeCard(); // primer clic fuera: solo cerrar
@@ -2437,6 +2632,7 @@ api.onFlyout(({ show, from }) => {
 // ---------- Onda al pulsar ----------
 const RIPPLE = 'button, .list-row, .task, .pchip, .bar, .cell, .layer-pill, .topic-h, .goal-check, .color-btn, .ctx-item, .how.near, .agent:not(.open)';
 window.addEventListener('pointerdown', (e) => {
+  if (S?.web) return; // en el móvil, la respuesta al toque es la de iOS (atenuar/encoger con :active), sin trabajo extra por toque
   const el = e.target.closest(RIPPLE);
   if (!el || e.target.closest('input, textarea, select')) return;
   if (el.matches('.rm-check, .rm-fold, .rm-info, .rm-bar button') || (S?.web && el.matches('.cell, .bar, .acheck, .rm-tile, .rm-lrow, .df-add button'))) return; // en el móvil, la pulsación propia de iOS
@@ -2599,14 +2795,15 @@ document.addEventListener('contextmenu', (e) => {
   openCtx(e.clientX, e.clientY, ctxFor(e.target));
 });
 // Pulsación larga (pantallas táctiles) = menú contextual
-let press = null;
+let press = null, pressAt = null;
 document.addEventListener('pointerdown', (e) => {
   if (e.pointerType !== 'touch') return;
   const { clientX: x, clientY: y, target } = e;
+  pressAt = [x, y];
   press = setTimeout(() => { ui.suppressClick = true; navigator.vibrate?.(12); openCtx(x, y, ctxFor(target)); }, 520);
 });
 ['pointerup', 'pointercancel'].forEach((ev) => document.addEventListener(ev, () => clearTimeout(press)));
-document.addEventListener('pointermove', (e) => { if (press && e.pointerType === 'touch' && (Math.abs(e.movementX) + Math.abs(e.movementY) > 6)) clearTimeout(press); });
+document.addEventListener('pointermove', (e) => { if (press && e.pointerType === 'touch' && Math.hypot(e.clientX - pressAt[0], e.clientY - pressAt[1]) > 8) clearTimeout(press); }, { passive: true });
 
 // ---------- Arrastre propio de barras (bloques, objetivos, exámenes) ----------
 let pdrag = null, lastDragEnd = 0;
