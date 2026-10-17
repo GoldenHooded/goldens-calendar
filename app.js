@@ -930,7 +930,13 @@ function swapCard(v) {
 }
 function updateCard() {
   const card = $('#card');
-  const html = cardHTML(ui.card);
+  const html = S.web ? sheetInner(ui.card) : cardHTML(ui.card);
+  if (S.web && ui.card?.type === 'day' && !dcar) {
+    const strip = $('.df-strip', card);
+    if (strip) morph(strip, dayStrip(ui.card.date), false);
+    $$('.card-in.nb', card).forEach((el) => delete el.dataset.date); // los días vecinos se repintan con los datos nuevos
+    prepDays();
+  }
   if (!html) return closeCard(true);
   const inner = $('.card-in', card);
   if (!inner || $('form', inner)) return; // no pisar un formulario a medio rellenar
@@ -990,29 +996,46 @@ function dayFull(d) {
   const dt = parse(d);
   const manual = S.db.days[d]?.status || '';
   const st = S.days[d];
-  const check = (it) => (it.type === 'goal' || it.type === 'todo' ? `<button class="acheck ${it.done ? 'on' : ''}" data-act="${it.type === 'todo' ? 'rm-toggle' : 'toggle-goal'}" data-id="${it.id}" aria-label="Hecho">${icon('check', 15)}</button>` : '');
+  const check = (it) => (it.type === 'goal' || it.type === 'todo' ? `<button class="acheck ${it.done ? 'on' : ''}" data-act="${it.type === 'todo' ? 'rm-toggle' : 'toggle-goal'}" data-id="${it.id}" aria-label="Hecho">${icon('check', 14)}</button>` : '');
+  const now = new Date(), nowM = now.getHours() * 60 + now.getMinutes();
+  // Fila como en el Calendario de iOS: hora de inicio y fin a la izquierda, raya de color y título en hasta dos líneas
+  const row = (it) => {
+    const [a, b] = it.time ? it.time.split('–') : [];
+    const live = d === S.today && a && minsOf(a) <= nowM && nowM < (b ? minsOf(b) : minsOf(a) + 60);
+    return `<div class="arow ${it.done ? 'done' : ''} ${live ? 'now' : ''}" style="--c:${it.color}" data-act="${it.type === 'todo' ? 'rm-goto' : 'swap'}" data-type="${it.type}" data-id="${esc(it.id)}" data-key="df-${esc(it.id)}">
+      ${a ? `<div class="atime"><b>${a}</b>${b ? `<span>${b}</span>` : ''}</div>` : ''}<span class="abar"></span>
+      <div class="agrow"><div class="at">${it.icon ? icon(it.icon, 14) : ''}<span>${esc(it.title)}</span></div><div class="as">${it.sub}</div></div>${check(it)}</div>`;
+  };
+  const allDay = items.filter((it) => !it.time), timed = items.filter((it) => it.time);
   return `
     <div class="df-head" data-key="dfh">
-      <div class="df-date"><span class="df-num ${d === S.today ? 'today' : ''}">${dt.getDate()}</span>
-        <div><div class="df-wd">${cap1(dt.toLocaleDateString('es-ES', { weekday: 'long' }))}</div><div class="df-mo">${MONTHS[dt.getMonth()]} ${dt.getFullYear()} · ${rel(diffDays(S.today, d))}</div></div></div>
-      <button class="ibtn" data-act="close-card" title="Cerrar">${icon('x', 20)}</button>
+      <div class="df-title">${cap1(dt.toLocaleDateString('es-ES', { weekday: 'long' }))}</div>
+      <div class="df-mo">${dt.getDate()} de ${MONTHS[dt.getMonth()].toLowerCase()} de ${dt.getFullYear()} · ${rel(diffDays(S.today, d))}</div>
     </div>
-    <div class="df-list" data-key="dfl">
-      ${items.map((it) => `<div class="arow ${it.done ? 'done' : ''}" style="--c:${it.color}" data-act="${it.type === 'todo' ? 'rm-goto' : 'swap'}" data-type="${it.type}" data-id="${esc(it.id)}" data-key="df-${esc(it.id)}">
-        <span class="abar"></span>
-        <div class="agrow"><div class="at">${it.icon ? icon(it.icon, 15) : ''}<span>${esc(it.title)}</span></div><div class="as">${it.sub}</div></div>
-        <div class="atime">${it.time || 'todo el día'}</div>${check(it)}</div>`).join('') || '<div class="df-empty">Día libre 🌿</div>'}
-    </div>
+    ${allDay.length ? `<div class="df-sec" data-key="dfs1">Todo el día</div><div class="df-list" data-key="dfl1">${allDay.map(row).join('')}</div>` : ''}
+    ${timed.length ? `<div class="df-sec" data-key="dfs2">Con hora</div><div class="df-list" data-key="dfl2">${timed.map(row).join('')}</div>` : ''}
+    ${items.length ? '' : '<div class="df-empty" data-key="dfe">Día libre 🌿<span>Toca + para añadir algo</span></div>'}
     ${d <= S.today ? `<div class="seg df-st" data-key="dfst">
       <button class="${manual === 'ok' || (!manual && st === 'ok') ? 'on ok' : ''}" data-act="day-status" data-date="${d}" data-s="ok">${icon('check', 15)} Voy al día</button>
-      <button class="${manual === 'late' || (!manual && st === 'late') ? 'on late' : ''}" data-act="day-status" data-date="${d}" data-s="late">${icon('clock', 15)} Voy atrasado</button></div>` : ''}
-    <div class="df-add" data-key="dfadd">
-      <button data-act="swap" data-type="new-block" data-date="${d}">${icon('layers', 20)}<span>Bloque</span></button>
-      <button data-act="swap" data-type="new-goal" data-date="${d}">${icon('target', 20)}<span>Objetivo</span></button>
-      <button data-act="swap" data-type="new-ms" data-date="${d}">${icon('cap', 20)}<span>Examen</span></button>
-      <button data-act="day-todo" data-date="${d}">${icon('checklist', 20)}<span>Recordatorio</span></button>
-    </div>
-    <div class="df-hint">Desliza a los lados para cambiar de día</div>`;
+      <button class="${manual === 'late' || (!manual && st === 'late') ? 'on late' : ''}" data-act="day-status" data-date="${d}" data-s="late">${icon('clock', 15)} Voy atrasado</button></div>` : ''}`;
+}
+// Tira de la semana sobre la vista del día (como en el Calendario de iOS): el día elegido va en un círculo
+function dayStrip(d) {
+  const ws = mondayOf(d);
+  return `<div class="ds-week" data-ws="${ws}">${[...Array(7)].map((_, i) => {
+    const x = addDays(ws, i);
+    return `<button class="ds-d ${x === d ? 'on' : ''} ${x === S.today ? 'today' : ''}" data-act="day-jump" data-date="${x}"><span class="wd">${'LMXJVSD'[i]}</span><span class="dn">${parse(x).getDate()}</span><i class="${mItems(x).length ? 'has' : ''}"></i></button>`;
+  }).join('')}</div>`;
+}
+// Mueve el círculo al día d; si es de otra semana, la tira entera desliza hacia ese lado
+function stripTo(d) {
+  const box = $('#card .df-strip');
+  if (!box) return;
+  const cur = $('.ds-week', box);
+  if (cur?.dataset.ws === mondayOf(d)) return $$('.ds-d', cur).forEach((b) => b.classList.toggle('on', b.dataset.date === d));
+  const dir = cur && cur.dataset.ws < mondayOf(d) ? 1 : -1;
+  box.innerHTML = dayStrip(d);
+  if (!reduceMotion()) $('.ds-week', box).animate([{ transform: `translate3d(${dir * 40}px,0,0)`, opacity: 0 }, { transform: 'none', opacity: 1 }], { duration: 320, easing: EASE_IOS });
 }
 
 // --- Páginas: en el móvil cada vista es una pantalla del historial del navegador ---
@@ -1082,8 +1105,12 @@ function applyScreen(s) {
   if (s.k === 'card') {
     ui.card = { ...s.v, anchor: null };
     card.removeAttribute('style');
-    card.className = 'card show page' + (s.v.type === 'day' ? ' day' : '');
-    card.innerHTML = `<div class="page-bar">${backBtn()}</div><div class="card-in">${html}</div>`;
+    const day = s.v.type === 'day';
+    card.className = 'card show page' + (day ? ' day' : '');
+    card.innerHTML = day
+      ? `<div class="page-bar">${backBtn()}<button class="ibtn page-add" data-act="day-add" title="Añadir" aria-label="Añadir">${icon('plus', 22)}</button></div><div class="df-strip">${dayStrip(s.v.date)}</div><div class="card-in">${html}</div>`
+      : `<div class="page-bar">${backBtn()}</div><div class="card-in">${html}</div>`;
+    if (day) prepDays();
     afterCard();
   } else if (ui.card || card.classList.contains('show')) {
     ui.card = null;
@@ -1275,41 +1302,72 @@ function monthSwipeInit() {
 }
 
 // --- Vista de un día: a los lados, el día anterior y el siguiente (mismo carrusel) ---
+// Los días vecinos se pintan de antemano (fuera de la pantalla), así el arrastre empieza sin esperar a nada
 let dcar = null;
-function dayNeighbor(c, d) {
-  const inner = $('#card .card-in:not(.nb)');
-  const el = document.createElement('div');
-  el.className = 'card-in nb';
-  el.setAttribute('aria-hidden', 'true');
+const dayMain = () => $('#card .card-in:not(.nb)');
+function dayNeighbor(c, d, date = addDays(ui.card.date, d)) {
+  const inner = dayMain();
+  let el = $(`#card .card-in.nb[data-side="${d}"]`);
+  if (!el) {
+    el = document.createElement('div');
+    el.className = 'card-in nb';
+    el.dataset.side = d;
+    el.setAttribute('aria-hidden', 'true');
+    $('#card').appendChild(el);
+  }
   Object.assign(el.style, { position: 'absolute', left: '0', top: inner.offsetTop + 'px', width: inner.offsetWidth + 'px', height: inner.offsetHeight + 'px', overflow: 'hidden', transform: tx(c.dx + d * (c.w + PAGE_GAP)) });
-  el.innerHTML = dayFull(addDays(ui.card.date, d));
-  $('#card').appendChild(el);
+  if (el.dataset.date !== date) {
+    el.innerHTML = dayFull(date);
+    el.dataset.date = date;
+    el.scrollTop = 0;
+  }
   c.side[d] = el;
 }
-async function dayRelease(c, go, vx) {
+function prepDays() {
+  clearTimeout(prepDays.t);
+  prepDays.t = setTimeout(() => {
+    if (!S?.web || ui.card?.type !== 'day' || dcar || !dayMain()) return;
+    const c = { dx: 0, w: $('#card').clientWidth, side: {} };
+    dayNeighbor(c, 1);
+    dayNeighbor(c, -1);
+  }, 450); // cuando la pantalla ya ha entrado
+}
+async function dayRelease(c, go, vx, date) {
   c.busy = true;
-  const inner = $('#card .card-in:not(.nb)');
+  const inner = dayMain();
   const w = c.w + PAGE_GAP;
+  const to = go && (date || addDays(ui.card.date, go));
+  if (go) stripTo(to); // el círculo de la tira se mueve ya, mientras desliza el día
   const anims = glide([[inner, 0], [c.side[1], w], [c.side[-1], -w]], c.dx, go ? -go * w : 0, vx);
   await anims[0].finished;
   if (go && ui.card?.type === 'day') {
-    ui.card = { ...ui.card, date: addDays(ui.card.date, go) };
+    ui.card = { ...ui.card, date: to };
     history.replaceState({ ...navCur(), scr: { k: 'card', v: pageOf(ui.card) } }, '');
-    inner.innerHTML = dayFull(ui.card.date);
+    // El vecino que ha entrado ya tiene el día pintado: se pasa su contenido tal cual (sin volver a maquetar)
+    const inc = c.side[go];
+    [inner.innerHTML, inc.innerHTML] = [inc.innerHTML, inner.innerHTML];
+    inc.dataset.date = addDays(to, -go) === inc.dataset.date ? inc.dataset.date : '';
     inner.scrollTop = 0;
+    // El que estaba en pantalla queda como vecino del otro lado
+    const back = c.side[-go];
+    [back.innerHTML, inc.innerHTML] = [inc.innerHTML, back.innerHTML];
+    back.dataset.date = addDays(to, -go) === addDays(to, -go) && !date ? addDays(to, -go) : '';
+    inc.dataset.date = '';
   }
+  for (const d of [1, -1]) c.side[d].style.transform = tx(d * w * 2);
+  inner.style.transform = '';
   anims.forEach((a) => a.cancel());
-  c.side[1].remove();
-  c.side[-1].remove();
   if (dcar === c) dcar = null;
+  prepDays();
 }
-// Cambiar de día con botones o con el teclado
-function stepDay(n) {
-  if (ui.card?.type !== 'day' || dcar) return;
+// Cambiar de día con botones, con el teclado o tocando la tira (n puede ser más de un día)
+function stepDay(n, date) {
+  if (ui.card?.type !== 'day' || dcar || !n) return;
+  const go = Math.sign(n);
   const c = (dcar = { dx: 0, w: $('#card').clientWidth, side: {} });
-  dayNeighbor(c, 1);
-  dayNeighbor(c, -1);
-  dayRelease(c, n, -n * 1.4);
+  dayNeighbor(c, 1, go === 1 ? date || addDays(ui.card.date, 1) : undefined);
+  dayNeighbor(c, -1, go === -1 ? date || addDays(ui.card.date, -1) : undefined);
+  dayRelease(c, go, -go * 1.4, date);
 }
 (() => {
   const card = $('#card');
@@ -2770,10 +2828,15 @@ document.addEventListener('keydown', async (e) => {
 monthSwipeInit();
 
 // Rueda = cambiar de mes. Sin bloqueo: cada muesca cuenta aunque siga la animación;
-// el touchpad acumula delta hasta sumar una muesca
+// el touchpad acumula delta hasta sumar una muesca. En la vista semanal, dentro de las horas
+// la rueda desplaza en vertical; fuera de ellas (cabecera, días, todo el día) cambia de semana
 let wheelAcc = 0, wheelT;
-$('#cal').addEventListener('wheel', (e) => {
+$('#widget').addEventListener('wheel', (e) => {
   if (ui.card) return;
+  const t = e.target;
+  if (ui.view === 'week') {
+    if (t.closest('.wk-body, .layer-wheel') || !t.closest('#cal, #head, #weekdays')) return;
+  } else if (!t.closest('#cal')) return;
   const dy = e.deltaMode === 1 ? e.deltaY * 33 : e.deltaY; // en líneas → px
   if (!dy) return;
   clearTimeout(wheelT);
