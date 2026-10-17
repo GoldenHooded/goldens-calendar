@@ -411,7 +411,7 @@ function weekViewHTML() {
   for (const b of S.db.blocks) {
     if (!(b.blocking || inLayer('blk', b))) continue;
     const st = S.stats.blocks[b.id];
-    for (const d of days) if (b.date <= d && blockEnd(b) >= d) put(d, { type: 'block', id: b.id, title: b.title, color: proj(b.projectId).color, from: minsOf(b.start), to: b.end ? minsOf(b.end) : minsOf(b.start) + 60, blocking: b.blocking, done: st?.pct === 100 });
+    for (const d of days) if (b.date <= d && blockEnd(b) >= d) put(d, { type: 'block', id: b.id, title: b.title, color: proj(b.projectId).color, from: minsOf(b.start), to: b.end ? minsOf(b.end) : minsOf(b.start) + 60, blocking: b.blocking, done: st?.pct === 100, icon: b.pausedAt ? 'pause' : isFixedB(b) && !b.blocking ? 'pin' : '' });
   }
   for (const e of S.db.extEvents || []) {
     const blocking = subBlocking(e.subId);
@@ -660,6 +660,17 @@ const taskRow = (t, color, from = '') => `
     <button class="ibtn x" data-act="del-task" data-id="${t.id}" title="Quitar">${icon('x', 12)}</button>
   </div>`;
 
+// Fijo: no se mueve al reorganizar (por defecto, los eventos y lo bloqueante)
+const isFixedB = (b) => b.fixed ?? ((b.event ?? !!b.blocking) || !!b.blocking);
+// ¿Se puede pausar ahora? El bloque de hoy que está en marcha (o el que ya está en pausa)
+function pausable(b) {
+  if (b.pausedAt) return true;
+  if (!b.start || b.date > S.today || blockEnd(b) < S.today || (b.event ?? !!b.blocking)) return false;
+  const now = new Date(), nm = now.getHours() * 60 + now.getMinutes();
+  const from = minsOf(b.start), to = b.end ? minsOf(b.end) : from + 60;
+  return from <= nm && nm < to && S.stats.blocks[b.id]?.pct !== 100;
+}
+const pauseBtn = (b) => (pausable(b) ? `<div class="c-actions"><button class="btn ${b.pausedAt ? 'primary' : ''}" data-act="pause-block" data-id="${b.id}" ${b.pausedAt ? 'data-resume="1"' : ''}>${b.pausedAt ? `${icon('play', 13)} Reanudar · en pausa desde las ${hhmmOf(new Date(b.pausedAt).getHours() * 60 + new Date(b.pausedAt).getMinutes())}` : `${icon('pause', 13)} Pausar`}</button></div>` : '');
 function cardBlock(id) {
   const b = byId(S.db.blocks, id);
   if (!b) return null;
@@ -670,7 +681,7 @@ function cardBlock(id) {
   const past = blockEnd(b) < S.today;
   return `
     <div class="c-head"><div class="t"><div class="c-title">${esc(b.title)}</div>
-      <div class="c-meta"><span class="tag" style="--c:${p.color}">${projLabel(b.projectId, b.categoryId)}</span>${b.blocking ? `<span class="tag blocking-tag">${icon('clock', 11)} Bloqueado</span>` : ''}${b.endDate ? `${fmtShort(b.date)} → ${fmtShort(b.endDate)}` : fmtLong(b.date)}${b.start ? ` · ${b.start}${b.end ? '–' + b.end : ''}` : ''}</div></div>
+      <div class="c-meta"><span class="tag" style="--c:${p.color}">${projLabel(b.projectId, b.categoryId)}</span>${b.blocking ? `<span class="tag blocking-tag">${icon('clock', 11)} Bloqueado</span>` : ''}${isFixedB(b) ? `<span class="tag blocking-tag" title="No se mueve al reorganizar">${icon('pin', 11)} Fijo</span>` : ''}${b.endDate ? `${fmtShort(b.date)} → ${fmtShort(b.endDate)}` : fmtLong(b.date)}${b.start ? ` · ${b.start}${b.end ? '–' + b.end : ''}` : ''}</div></div>
       <button class="ibtn" data-act="close-card">${icon('x', 15)}</button></div>
     <div class="c-hero" style="--c:${p.color}">${ring('cb-' + id, st.pct, p.color, 48, 5)}
       <div><div style="font-weight:600">${st.carried ? 'Pendientes movidos' : st.manual ? (b.done ? 'Hecho' : 'Sin tareas') : `${st.done} de ${st.total} hechas`}</div>
@@ -681,6 +692,7 @@ function cardBlock(id) {
       ${!tasks.length && !st.carried && !(b.event ?? !!b.blocking) ? `<div class="task ${b.done ? 'done' : ''}" style="--c:${p.color}" data-act="toggle-block" data-id="${id}"><span class="check">${icon('check', 12)}</span><span class="tt"><span class="tx">Bloque completado</span></span></div>` : ''}
       <input class="inline-add" data-key="addb-${id}" data-add="block-task" data-id="${id}" placeholder="Añadir tarea a este bloque  ↵" />
     </div>
+    ${pauseBtn(b)}
     ${past && st.pct < 100 ? `<div class="c-actions"><button class="btn" data-act="rollover">${icon('redo', 13)} Pasar lo pendiente al siguiente bloque</button></div>` : ''}
     <div class="c-foot"><button class="btn plain" data-act="swap" data-type="edit-block" data-id="${id}">${icon('edit', 13)} Editar</button><button class="btn danger" data-act="del-block" data-id="${id}">${icon('trash', 13)}</button></div>`;
 }
@@ -847,6 +859,7 @@ function formBlock({ id, date, ms, start }) {
       <label class="field"><span>Fin</span><input class="input" type="time" name="end" value="${b?.end || (start ? hhmmOf(Math.min(1439, minsOf(start) + 60)) : '')}"></label></div>
     <label class="toggle"><div>Es un evento<small>Un viaje, una cita, una clase…: no es una tarea, no se pregunta si lo has terminado ni suma al progreso</small></div><input type="checkbox" name="event" ${b && (b.event ?? !!b.blocking) ? 'checked' : ''}><span class="switch"></span></label>
     <label class="toggle"><div>Tiempo bloqueado<small>Ocupa su hueco en todas las capas: no se podrá poner nada encima</small></div><input type="checkbox" name="blocking" ${b?.blocking ? 'checked' : ''}><span class="switch"></span></label>
+    <label class="toggle"><div>Fijo<small>No se mueve al reorganizar ni al retrasar por una pausa (una clase, una cita…). Si no, es flexible</small></div><input type="checkbox" name="fixed" ${b && isFixedB(b) ? 'checked' : ''}><span class="switch"></span></label>
     <div class="field"><span>Tareas</span><div class="picklist" data-pick>${pid ? pickTasks(pid, mid, assigned, id) : ''}</div></div>
     ${formFoot(b ? 'Guardar' : 'Crear bloque')}</form>`;
 }
@@ -1010,7 +1023,7 @@ function mItems(d) {
   for (const g of S.db.goals || []) if (g.date === d && inLayer('goal', g)) out.push({ type: 'goal', id: g.id, color: goalColor(g), title: g.title, sub: `Objetivo${g.projectId ? ' · ' + projLabel(g.projectId, g.categoryId) : ''}`, time: g.time || '', done: g.done, icon: 'target' });
   for (const b of S.db.blocks) if (b.date <= d && blockEnd(b) >= d && inLayer('blk', b)) {
     const st = S.stats.blocks[b.id];
-    out.push({ type: 'block', id: b.id, color: proj(b.projectId).color, title: b.title, sub: `${projLabel(b.projectId, b.categoryId)} · ${st.manual ? (b.done ? 'hecho' : 'pendiente') : `${st.done}/${st.total} tareas`}`, time: b.start ? `${b.start}${b.end ? '–' + b.end : ''}` : '', done: st.pct === 100 });
+    out.push({ type: 'block', id: b.id, color: proj(b.projectId).color, title: b.title, sub: `${projLabel(b.projectId, b.categoryId)} · ${b.pausedAt ? 'en pausa' : (b.event ?? !!b.blocking) ? 'evento' : st.manual ? (b.done ? 'hecho' : 'pendiente') : `${st.done}/${st.total} tareas`}${isFixedB(b) ? ' · fijo' : ''}`, time: b.start ? `${b.start}${b.end ? '–' + b.end : ''}` : '', done: st.pct === 100, icon: b.pausedAt ? 'pause' : isFixedB(b) ? 'pin' : '' });
   }
   for (const t of rmAll()) if (t.due === d && (!t.done || rmRecent.has(t.id))) out.push({ type: 'todo', id: t.id, color: rmColor(t), title: t.title, sub: esc(rmListOf(t.listId).name) + (t.tags?.length ? ' · ' + t.tags.map((g) => '#' + esc(g)).join(' ') : ''), time: t.time || '', done: t.done, icon: t.flagged ? 'flag' : '' });
   for (const e of S.db.extEvents || []) if (e.date <= d && (e.endDate || e.date) >= d && inLayer('ext', e)) out.push({ type: 'ext', id: e.id, color: subColor(e.subId), title: e.title, sub: esc(byId(S.db.subscriptions || [], e.subId)?.name || ''), time: e.start ? `${e.start}${e.end ? '–' + e.end : ''}` : '' });
@@ -1029,7 +1042,7 @@ function dayFull(d) {
   // Fila como en el Calendario de iOS: hora de inicio y fin a la izquierda, raya de color y título en hasta dos líneas
   const row = (it) => {
     const [a, b] = it.time ? it.time.split('–') : [];
-    const live = d === S.today && a && minsOf(a) <= nowM && nowM < (b ? minsOf(b) : minsOf(a) + 60);
+    const live = d === S.today && !it.done && a && minsOf(a) <= nowM && nowM < (b ? minsOf(b) : minsOf(a) + 60);
     return `<div class="arow ${it.done ? 'done' : ''} ${live ? 'now' : ''}" style="--c:${it.color}" data-act="${it.type === 'todo' ? 'rm-goto' : 'swap'}" data-type="${it.type}" data-id="${esc(it.id)}" data-key="df-${esc(it.id)}">
       ${a ? `<div class="atime"><b>${a}</b>${b ? `<span>${b}</span>` : ''}</div>` : ''}<span class="abar"></span>
       <div class="agrow"><div class="at">${it.icon ? icon(it.icon, 14) : ''}<span>${esc(it.title)}</span></div><div class="as">${it.sub}</div></div>${check(it)}</div>`;
@@ -2626,6 +2639,14 @@ const actions = {
   },
   'open-day': (el) => { if (ui.card) return closeCard(); openCard({ type: 'day', date: el.dataset.date }, el); },
   'day-step': (el) => stepDay(+el.dataset.d),
+  // Pausa del bloque en marcha: al reanudar se alarga lo que ha durado y se retrasa lo flexible de detrás
+  'pause-block': async (el) => {
+    const resume = !!el.dataset.resume;
+    const r = await run('pause_block', { id: el.dataset.id, resume });
+    await refresh();
+    if (!resume) return toast(`${icon('pause', 14)} En pausa: cuando vuelvas, pulsa Reanudar`);
+    toast(`${icon('play', 14)} Pausa de ${r.pausedMin} min · acaba a las ${r.end}${r.moved.length ? ` · ${r.moved.length} retrasado${r.moved.length > 1 ? 's' : ''}` : ''}${r.conflicts.length && !S.web ? ' · Claude lo reorganiza' : ''}`, 4500);
+  },
   'day-jump': (el) => ui.card?.type === 'day' && stepDay(diffDays(ui.card.date, el.dataset.date), el.dataset.date),
   // «+» de la vista del día: menú con lo que se puede añadir ese día
   // «+» de la vista del día y de la cabecera del móvil: menú con lo que se puede añadir
@@ -3013,12 +3034,12 @@ document.addEventListener('submit', async (e) => {
       if (f.dataset.id) {
         const was = S.db.tasks.filter((t) => t.blockId === f.dataset.id).map((t) => t.id);
         for (const id of was.filter((x) => !taskIds.includes(x))) await run('update_task', { id, blockId: '' });
-        await run('update_block', { id: f.dataset.id, title: d.title, date: d.date, endDate: d.endDate || '', start: d.start || '', end: d.end || '', taskIds, categoryId: d.categoryId ?? undefined, blocking: !!d.blocking, event: !!d.event });
+        await run('update_block', { id: f.dataset.id, title: d.title, date: d.date, endDate: d.endDate || '', start: d.start || '', end: d.end || '', taskIds, categoryId: d.categoryId ?? undefined, blocking: !!d.blocking, event: !!d.event, fixed: !!d.fixed });
         await refresh();
         return swapCard({ type: 'block', id: f.dataset.id });
       }
       const projectId = await ensureProject();
-      const b = await run('create_block', { projectId, milestoneId: d.milestoneId || undefined, categoryId: d.categoryId || undefined, blocking: !!d.blocking || undefined, event: d.event ? true : undefined, title: d.title, date: d.date, endDate: d.endDate || undefined, start: d.start || undefined, end: d.end || undefined, taskIds });
+      const b = await run('create_block', { projectId, milestoneId: d.milestoneId || undefined, categoryId: d.categoryId || undefined, blocking: !!d.blocking || undefined, event: d.event ? true : undefined, fixed: d.fixed ? true : undefined, title: d.title, date: d.date, endDate: d.endDate || undefined, start: d.start || undefined, end: d.end || undefined, taskIds });
       toast(b.sumsTo?.length ? `${icon('layers', 14)} Bloque creado · suma a ${b.sumsTo.map(esc).join(', ')}` : `${icon('check', 14)} Bloque creado`, b.sumsTo?.length ? 4500 : 2600);
       await refresh();
       swapCard({ type: 'block', id: b.id });
