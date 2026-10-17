@@ -464,7 +464,7 @@ function weekViewHTML() {
   const hours = [];
   for (let m = h0; m <= h1; m += 60) hours.push(`<span style="top:calc(${m - h0}px * var(--ppm))">${m / 60}</span>`);
   return `<div class="wk" data-key="wk">
-    <div class="wk-row wk-head" data-key="wkh"><div class="wk-gut"></div>${days.map((d, i) => `<button class="wk-dh ${d === S.today ? 'today' : ''} ${parse(d).getDay() % 6 === 0 ? 'we' : ''}" data-act="open-day" data-date="${d}" data-key="wdh-${d}"><span class="wd">${WD_SHORT[i]}</span><span class="dn">${parse(d).getDate()}</span></button>`).join('')}</div>
+    <div class="wk-row wk-head" data-key="wkh"><div class="wk-gut"></div>${days.map((d, i) => `<button class="wk-dh ${d === S.today ? 'today' : ''} ${parse(d).getDay() % 6 === 0 ? 'we' : ''}" data-act="open-day" data-date="${d}" data-key="wdh-${d}"><span class="wd">${WD_SHORT[(parse(d).getDay() + 6) % 7]}</span><span class="dn">${parse(d).getDate()}</span></button>`).join('')}</div>
     ${adRows ? `<div class="wk-row wk-allday" data-key="wka"><div class="wk-gut"></div>${days.map((d) => `<div class="wk-ad" data-key="wad-${d}">${allday[d].slice(0, 3).map((it) => `<div class="wk-chip ${it.type} ${it.blocking ? 'blocking' : ''} ${it.done ? 'done' : ''}" ${it.type === 'todo' ? 'data-act="rm-goto"' : `data-act="open" data-type="${it.type}"`} data-id="${esc(it.id)}" data-key="wac-${esc(it.id)}-${d}" style="--c:${it.color};--ink:${ink(it.color)}" title="${esc(it.title)}">${it.icon ? icon(it.icon, 10) : ''}${esc(it.title)}</div>`).join('')}${allday[d].length > 3 ? `<span class="wk-more">+${allday[d].length - 3}</span>` : ''}</div>`).join('')}</div>` : ''}
     <div class="wk-body" data-key="wkb"><div class="wk-grid" data-key="wkg" data-h0="${h0}" data-ppm="${ppm}" style="height:calc(${h1 - h0}px * var(--ppm));--ppm:${ppm}">
       <div class="wk-hours" data-key="wkhr">${hours.join('')}</div>${cols.join('')}</div></div>
@@ -530,6 +530,29 @@ async function goWeekOrMonth(d) {
   S = st;
   renderHead();
   renderCal(d || 1, !!d);
+}
+// Semana en el PC: la rueda corre un día (no tiene por qué empezar en lunes). Las columnas que
+// siguen se deslizan desde donde estaban (también a mitad de animación) y el día nuevo entra con un fundido
+async function stepDays(d) {
+  closeCard(true);
+  ui.weekStart = addDays(ui.weekStart, d);
+  ui.month = ui.weekStart.slice(0, 8) + '01';
+  const seq = ++goSeq;
+  const st = await api.state(gridRange());
+  if (seq !== goSeq) return;
+  const SEL = '#weeks .wk-col, #weeks .wk-dh, #weeks .wk-ad';
+  const before = {};
+  for (const el of $$(SEL)) before[el.dataset.key] = el.getBoundingClientRect().left;
+  S = st;
+  renderHead();
+  renderCal(0);
+  const E = 'cubic-bezier(0.22, 1, 0.36, 1)';
+  for (const el of $$(SEL)) {
+    el.getAnimations().forEach((a) => a.cancel());
+    const x0 = before[el.dataset.key], dx = x0 == null ? 0 : x0 - el.getBoundingClientRect().left;
+    if (x0 == null) el.animate([{ opacity: 0, transform: `translateX(${d * 16}px)` }, { opacity: 1, transform: 'none' }], { duration: 340, easing: E });
+    else if (Math.abs(dx) > 0.5) el.animate([{ transform: `translateX(${dx}px)` }, { transform: 'none' }], { duration: 340, easing: E });
+  }
 }
 function changeWeek(d) {
   if (S?.web && d) return carGo(addDays(ui.weekStart, d * 7), d); // en el móvil, la semana desliza como el mes
@@ -1264,11 +1287,13 @@ function carMove(c) {
 async function carRelease(c, go, vx) {
   c.busy = true;
   const side = go ? await carSide(c, go, c.side[go]?.key) : null;
+  if (c.grabbed) return;
   if (!side?.el) go = 0;
   const w = c.w + PAGE_GAP;
   const els = [[$('#weeks'), 0], ...[1, -1].filter((d) => c.side[d]?.el).map((d) => [c.side[d].el, d * w])];
   const anims = glide(els, c.dx, go ? -go * w : 0, vx);
   const top = c.week && go ? wkTopMin(side.el) : null;
+  Object.assign(c, { anims, go, top, prev: { key: c.week ? ui.weekStart : ui.month, st: S } });
   if (go) {
     if (c.week) (ui.weekStart = side.key), (ui.month = side.key.slice(0, 8) + '01');
     else ui.month = side.key;
@@ -1276,7 +1301,8 @@ async function carRelease(c, go, vx) {
     renderHead();
     $('#head .month')?.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 220, easing: 'ease-out' });
   }
-  await anims[0].finished;
+  try { await anims[0].finished; } catch { return; } // el dedo lo ha vuelto a coger (carGrab sigue desde ahí)
+  if (c.grabbed) return;
   if (go) {
     renderCal(go, false); // mismo contenido que el vecino y ya en su sitio: el relevo no se ve
     if (c.week) wkScrollTo($('#weeks'), top);
@@ -1286,9 +1312,47 @@ async function carRelease(c, go, vx) {
   for (const d of [1, -1]) c.side[d]?.el?.remove();
   if (car === c) car = null;
 }
+// Coger el carrusel mientras aún se mueve (para encadenar deslizamientos sin esperar): se para donde está
+// y, si iba hacia otro mes o semana, ese pasa ya a ser el actual. Devuelve el carrusel nuevo, listo para arrastrar
+function carGrab() {
+  const c = car;
+  if (!c?.anims || c.grabbed) return null; // aún cargando el vecino: no se interrumpe
+  const weeks = $('#weeks');
+  const x = new DOMMatrix(getComputedStyle(weeks).transform).m41;
+  c.grabbed = c.done = true;
+  c.anims.forEach((a) => a.cancel());
+  const w = c.w + PAGE_GAP;
+  const n = { dx: x, w: c.w, week: c.week, side: {} };
+  if (c.go) {
+    // La página que se iba queda como vecina del otro lado (copia tal cual, sin pedir datos)
+    const old = weeks.cloneNode(true);
+    old.removeAttribute('id');
+    old.className = 'weeks nb' + (c.week ? ' wkview' : '');
+    old.setAttribute('aria-hidden', 'true');
+    old.querySelectorAll('[id]').forEach((el) => el.removeAttribute('id'));
+    const oldTop = c.week ? wkTopMin(weeks) : null;
+    for (const d of [1, -1]) c.side[d]?.el?.remove();
+    $('#cal').appendChild(old);
+    if (c.week) wkScrollTo(old, oldTop);
+    const s = { key: c.prev.key, st: c.prev.st, el: old };
+    s.ready = Promise.resolve(s);
+    n.side[-c.go] = s;
+    renderCal(c.go, false);
+    if (c.week) wkScrollTo(weeks, c.top);
+    n.dx = x + c.go * w;
+    carSide(n, c.go);
+  } else n.side = c.side;
+  car = n;
+  carMove(n);
+  return n;
+}
 // Flechas y «Hoy»: el mismo carrusel, con un empujón inicial como si lo lanzaras
 async function carGo(key, d) {
-  if (car) return;
+  if (car) { // encadenar flechas: sigue hacia el siguiente sin esperar a que pare
+    const n = carGrab();
+    if (n) carRelease(n, key === carKey(d, n.week) ? d : 0, -d * 1.4);
+    return;
+  }
   const c = (car = { dx: 0, w: $('#cal').clientWidth, week: ui.view === 'week', side: {} });
   await carSide(c, d, key);
   return carRelease(c, d, -d * 1.4);
@@ -1297,8 +1361,16 @@ function monthSwipeInit() {
   const cal = $('#cal');
   let g = null;
   cal.addEventListener('touchstart', (e) => {
-    if (!S?.web || ui.card || ui.how === 'open' || car || e.touches.length > 1) return;
+    if (!S?.web || ui.card || ui.how === 'open' || e.touches.length > 1) return;
     const t = e.touches[0];
+    if (car) {
+      // Aún se está moviendo: el dedo lo coge donde esté y sigue arrastrando desde ahí
+      const n = carGrab();
+      if (!n) return;
+      clearTimeout(press);
+      g = { x: t.clientX - n.dx, y: t.clientY, on: true, c: n, tr: tracker(t.clientX, t.clientY) };
+      return;
+    }
     g = { x: t.clientX, y: t.clientY, on: false, tr: tracker(t.clientX, t.clientY) };
   }, { passive: true });
   // Pasivo: el mes tiene touch-action: none y la semana pan-y (el scroll vertical de las horas es del navegador)
@@ -1436,31 +1508,60 @@ async function dayRelease(c, go, vx, date) {
   const to = go && (date || addDays(ui.card.date, go));
   if (go) stripTo(to); // el círculo de la tira se mueve ya, mientras desliza el día
   const anims = glide([[inner, 0], [c.side[1], w], [c.side[-1], -w]], c.dx, go ? -go * w : 0, vx);
-  await anims[0].finished;
-  if (go && ui.card?.type === 'day') {
-    const from = ui.card.date;
-    ui.card = { ...ui.card, date: to };
-    history.replaceState({ ...navCur(), scr: { k: 'card', v: pageOf(ui.card) } }, '');
-    // Los nodos se mueven tal cual (sin volver a pintar): el vecino que ha entrado pasa a ser el día en pantalla
-    // y el que estaba queda al otro lado (prepDays repinta lo que no encaje)
-    const inc = c.side[go], back = c.side[-go];
-    const old = [...inner.childNodes];
-    inner.replaceChildren(...inc.childNodes);
-    back.replaceChildren(...old);
-    back.dataset.date = from;
-    inc.dataset.date = '';
-    inner.scrollTop = 0;
-  }
+  Object.assign(c, { anims, go, to });
+  try { await anims[0].finished; } catch { return; } // el dedo lo ha vuelto a coger (dayGrab sigue desde ahí)
+  if (c.grabbed) return;
+  dayCommit(c, go, to);
   for (const d of [1, -1]) c.side[d].style.transform = tx(d * w);
   inner.style.transform = '';
   anims.forEach((a) => a.cancel());
   if (dcar === c) dcar = null;
   prepDays();
 }
+// El día al que se iba pasa a ser el de pantalla. Los nodos se mueven tal cual (sin volver a pintar): el vecino
+// que ha entrado pasa a ser el día en pantalla y el que estaba queda al otro lado (prepDays repinta lo que no encaje)
+function dayCommit(c, go, to) {
+  if (!go || ui.card?.type !== 'day') return;
+  const inner = dayMain();
+  const from = ui.card.date;
+  ui.card = { ...ui.card, date: to };
+  history.replaceState({ ...navCur(), scr: { k: 'card', v: pageOf(ui.card) } }, '');
+  const inc = c.side[go], back = c.side[-go];
+  const old = [...inner.childNodes];
+  inner.replaceChildren(...inc.childNodes);
+  back.replaceChildren(...old);
+  back.dataset.date = from;
+  inc.dataset.date = '';
+  inner.scrollTop = 0;
+}
+// Coger el día mientras aún se desliza (para encadenar sin esperar): se para donde está y, si iba hacia otro día,
+// ese pasa ya a ser el de pantalla. Devuelve el carrusel nuevo, listo para arrastrar
+function dayGrab() {
+  const c = dcar;
+  if (!c?.anims || c.grabbed) return null;
+  const x = new DOMMatrix(getComputedStyle(dayMain()).transform).m41;
+  c.grabbed = true;
+  c.anims.forEach((a) => a.cancel());
+  const n = (dcar = { dx: x, w: c.w, side: {} });
+  if (c.go) {
+    dayCommit(c, c.go, c.to);
+    n.dx = x + c.go * (c.w + PAGE_GAP);
+  }
+  dayNeighbor(n, 1);
+  dayNeighbor(n, -1);
+  dayMain().style.transform = tx(n.dx);
+  return n;
+}
 // Cambiar de día con botones, con el teclado o tocando la tira (n puede ser más de un día)
 function stepDay(n, date) {
-  if (ui.card?.type !== 'day' || dcar || !n) return;
+  if (ui.card?.type !== 'day' || !n) return;
   const go = Math.sign(n);
+  if (dcar) {
+    const c = dayGrab(); // encadenar: sigue sin esperar a que pare el anterior
+    if (!c) return;
+    if (date) dayNeighbor(c, go, date);
+    return dayRelease(c, go, -go * 1.4, date);
+  }
   const c = (dcar = { dx: 0, w: $('#card').clientWidth, side: {} });
   dayNeighbor(c, 1, go === 1 ? date || addDays(ui.card.date, 1) : undefined);
   dayNeighbor(c, -1, go === -1 ? date || addDays(ui.card.date, -1) : undefined);
@@ -1470,9 +1571,17 @@ function stepDay(n, date) {
   const card = $('#card');
   let g = null;
   card.addEventListener('touchstart', (e) => {
-    if (!S?.web || ui.card?.type !== 'day' || dcar || e.touches.length > 1 || e.target.closest('input, textarea, select')) return;
+    if (!S?.web || ui.card?.type !== 'day' || e.touches.length > 1 || e.target.closest('input, textarea, select')) return;
     const t = e.touches[0];
     if (navigator.standalone && t.clientX < 18) return; // es el gesto de atrás
+    if (dcar) {
+      // Aún se está deslizando: el dedo lo coge donde esté y sigue arrastrando desde ahí
+      const n = !e.target.closest('.df-strip') && dayGrab();
+      if (!n) return;
+      clearTimeout(press);
+      g = { x: t.clientX - n.dx, y: t.clientY, on: true, c: n, tr: tracker(t.clientX, t.clientY) };
+      return;
+    }
     g = { x: t.clientX, y: t.clientY, on: false, tr: tracker(t.clientX, t.clientY), strip: !!e.target.closest('.df-strip') };
   }, { passive: true });
   // Pasivo: el contenido tiene touch-action: pan-y (el scroll vertical es nativo y el horizontal es nuestro)
@@ -1897,54 +2006,90 @@ if (window.visualViewport) {
   vv.addEventListener('scroll', kb);
 }
 
-// Deslizar una fila: derecha = sangrar, izquierda = quitar sangría (o mostrar «Borrar» si ya está arriba del todo)
+// Deslizar una fila: derecha = sangrar, izquierda = quitar sangría (o mostrar «Borrar» si ya está arriba del todo).
+// La fila sigue al dedo sin saltos (con resistencia progresiva al final) y, al soltar, sale desde donde está:
+// si cambia la sangría, las filas viajan a su sitio nuevo (FLIP) en vez de recolocarse de golpe
 let rsw = null;
+const RM_ARM = 64, RM_DEL = -90;
+const rmResist = (x) => Math.sign(x) * 130 * Math.tanh(Math.abs(x) / 150); // cada vez cuesta más, sin tope seco
+const rmUnresist = (x) => Math.sign(x) * 150 * Math.atanh(Math.min(0.98, Math.abs(x) / 130));
+const rmX = (el) => new DOMMatrix(getComputedStyle(el).transform).m41;
 document.addEventListener('touchstart', (e) => {
   const row = e.target.closest('.rm-row:not(.draft)');
-  $$('.rm-row.swiped').forEach((r) => r !== row && r.classList.remove('swiped'));
-  if (!row || e.target.closest('.rm-detail, .rm-swdel')) return;
-  rsw = { row, x: e.touches[0].clientX, y: e.touches[0].clientY, dx: 0, on: false };
+  $$('.rm-row.swiped').forEach((r) => r !== row && rmSettle(r, 0));
+  if (!row || e.target.closest('.rm-detail, .rm-swdel') || e.touches.length > 1) return;
+  rsw = { row, x: e.touches[0].clientX, y: e.touches[0].clientY, dx: 0, on: false, tr: tracker(e.touches[0].clientX, e.touches[0].clientY) };
 }, { passive: true });
 document.addEventListener('touchmove', (e) => {
   if (!rsw) return;
-  const dx = e.touches[0].clientX - rsw.x, dy = e.touches[0].clientY - rsw.y;
+  const t = e.touches[0];
+  const dx = t.clientX - rsw.x, dy = t.clientY - rsw.y;
+  rsw.tr.add(t.clientX, t.clientY);
   if (!rsw.on) {
-    if (Math.abs(dy) > 12 && Math.abs(dy) > Math.abs(dx)) return (rsw = null);
-    if (Math.abs(dx) < 12) return;
+    if (Math.abs(dy) > 10 && Math.abs(dy) > Math.abs(dx)) return (rsw = null);
+    if (Math.abs(dx) < 10 || Math.abs(dx) < Math.abs(dy) * 1.2) return;
     rsw.on = true;
     clearTimeout(press);
+    // Arranca desde donde está la fila (también si estaba abierta enseñando «Borrar»), sin saltar
+    const row = rsw.row;
+    const from = rmX(row);
+    row.getAnimations().forEach((an) => an.cancel());
+    row.classList.remove('swiped');
+    row.style.transition = 'none';
+    rsw.x = t.clientX - rmUnresist(from) / 0.9;
   }
-  rsw.dx = dx;
-  const lim = Math.max(-120, Math.min(120, dx * 0.7));
-  rsw.row.style.transition = 'none';
-  rsw.row.style.transform = `translateX(${lim}px)`;
-  const arm = dx > 70 ? 'in' : dx < -70 ? 'out' : '';
+  rsw.dx = t.clientX - rsw.x;
+  const x = rmResist(rsw.dx * 0.9);
+  rsw.row.style.transform = `translate3d(${x}px,0,0)`;
+  const arm = x > RM_ARM ? 'in' : x < -RM_ARM ? 'out' : '';
   if (arm !== (rsw.row.dataset.arm || '')) { rsw.row.dataset.arm = arm; if (arm) navigator.vibrate?.(6); }
 }, { passive: true });
-document.addEventListener('touchend', async () => {
+// Lleva la fila a x con un muelle que arranca a la velocidad del dedo (sin rebote)
+function rmSettle(row, x, v = 0) {
+  const from = rmX(row);
+  row.classList.toggle('swiped', x === RM_DEL);
+  row.style.transition = 'none';
+  row.style.transform = x ? `translate3d(${x}px,0,0)` : '';
+  if (Math.abs(from - x) < 0.5) return void (row.style.transition = '');
+  const { frames, duration } = springFrames(from, x, v, 0.36);
+  row.animate(frames.map((f) => ({ transform: `translate3d(${f}px,0,0)` })), { duration, easing: 'linear' }).onfinish = () => (row.style.transition = '');
+}
+// Cambia algo que mueve filas y las anima desde donde estaban hasta su sitio nuevo
+async function rmFlip(change) {
+  const pos = (r) => ($('.rm-check', r) || r).getBoundingClientRect();
+  const before = new Map($$('.rm-row[data-id]').map((r) => [r.dataset.id, pos(r)]));
+  await change();
+  for (const r of $$('.rm-row[data-id]')) {
+    r.getAnimations().forEach((an) => an.cancel());
+    r.style.transition = 'none';
+    r.style.transform = '';
+    delete r.dataset.arm;
+    const b = before.get(r.dataset.id);
+    if (!b) continue;
+    const a = pos(r);
+    const dx = b.left - a.left, dy = b.top - a.top;
+    if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) { r.style.transition = ''; continue; }
+    r.animate([{ transform: `translate3d(${dx}px,${dy}px,0)` }, { transform: 'none' }], { duration: 380, easing: EASE_IOS }).onfinish = () => (r.style.transition = '');
+  }
+}
+document.addEventListener('touchend', async (e) => {
+  if (e.touches.length) return;
   const s = rsw;
   rsw = null;
   if (!s?.on) return;
-  ui.suppressClick = true;
-  setTimeout(() => (ui.suppressClick = false), 60);
-  const { row, dx } = s;
-  row.style.transition = '';
-  row.style.transform = '';
+  quietClick(60);
+  const { row } = s;
+  const x = rmX(row), [v] = s.tr.v();
   delete row.dataset.arm;
   const t = byId(rmAll(), row.dataset.id);
-  if (!t) return;
-  if (dx > 70 && !row.closest('.rm-flatlist')) {
-    try { await run('indent_todo', { id: t.id }); } catch {}
-    return rmReload();
-  }
-  if (dx < -70) {
-    if (t.parentId && !row.closest('.rm-flatlist')) {
-      await run('indent_todo', { id: t.id, outdent: true });
-      return rmReload();
-    }
-    row.classList.add('swiped');
-  }
+  if (!t) return rmSettle(row, 0, v);
+  const flat = !!row.closest('.rm-flatlist');
+  if (x > RM_ARM && !flat) return rmFlip(async () => { try { await run('indent_todo', { id: t.id }); } catch {} await rmReload(); });
+  if (x < -RM_ARM && t.parentId && !flat) return rmFlip(async () => { try { await run('indent_todo', { id: t.id, outdent: true }); } catch {} await rmReload(); });
+  // Sin cambio de sangría: se queda abierta enseñando «Borrar» si se ha deslizado (o lanzado) a la izquierda
+  rmSettle(row, x < -RM_ARM || (x < -24 && v < -0.3) ? RM_DEL : 0, v);
 }, { passive: true });
+document.addEventListener('touchcancel', () => { if (rsw?.on) rmSettle(rsw.row, 0); rsw = null; }, { passive: true });
 
 async function rmToggle(el, id) {
   const t = byId(rmAll(), id);
@@ -2959,7 +3104,7 @@ monthSwipeInit();
 
 // Rueda = cambiar de mes. Sin bloqueo: cada muesca cuenta aunque siga la animación;
 // el touchpad acumula delta hasta sumar una muesca. En la vista semanal, dentro de las horas
-// la rueda desplaza en vertical; fuera de ellas (cabecera, días, todo el día) cambia de semana
+// la rueda desplaza en vertical; fuera de ellas (cabecera, días, todo el día) corre un día
 let wheelAcc = 0, wheelT;
 $('#widget').addEventListener('wheel', (e) => {
   if (ui.card) return;
@@ -2971,13 +3116,14 @@ $('#widget').addEventListener('wheel', (e) => {
   if (!dy) return;
   clearTimeout(wheelT);
   wheelT = setTimeout(() => (wheelAcc = 0), 250);
-  if (Math.abs(dy) >= 50) { wheelAcc = 0; return changeMonth(Math.sign(dy)); } // muesca de ratón = un mes
+  const step = (d) => (ui.view === 'week' && !S?.web ? stepDays(d) : changeMonth(d)); // en la semana, un día
+  if (Math.abs(dy) >= 50) { wheelAcc = 0; return step(Math.sign(dy)); } // muesca de ratón = un mes (o un día)
   if (Math.sign(dy) !== Math.sign(wheelAcc)) wheelAcc = 0; // cambio de sentido: responde al instante
   wheelAcc += dy;
   while (Math.abs(wheelAcc) >= 80) {
     const d = Math.sign(wheelAcc);
     wheelAcc -= d * 80;
-    changeMonth(d);
+    step(d);
   }
 }, { passive: true });
 function changeMonth(d) {
