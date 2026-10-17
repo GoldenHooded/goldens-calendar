@@ -949,6 +949,20 @@ body.web .login-card { border-radius: var(--r-xl); padding: 28px 22px; }
 .cell.blocked::before { opacity: 1; background: repeating-linear-gradient(-45deg, color-mix(in srgb, var(--text) 9%, transparent) 0 3px, transparent 3px 8px); }
 .tag.blocking-tag { --c: var(--muted); }
 
+/* Tiempo bloqueado de otra capa: solo la forma, gris translúcido y de fondo, sin texto */
+.bar.foreign, .wk-it.foreign, .wk-chip.foreign, .arow.foreign .abar {
+  background-color: color-mix(in srgb, var(--text) 8%, transparent) !important; color: transparent !important; border-color: transparent !important; box-shadow: none !important;
+  background-image: repeating-linear-gradient(-45deg, color-mix(in srgb, var(--text) 9%, transparent) 0 3px, transparent 3px 7px) !important;
+}
+.bar.foreign, .wk-it.foreign, .wk-chip.foreign { overflow: hidden; font-size: 0; }
+.wk-it.foreign { z-index: 0; margin: 0; border-radius: 6px; }
+.wk-it.foreign:hover { transform: none; filter: none; }
+.wk-it:not(.foreign) { z-index: 1; }
+.arow.foreign { background: transparent; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text) 7%, transparent); min-height: 40px; }
+.arow.foreign .abar { align-self: stretch; flex: 1; width: auto; border-radius: 8px; }
+.arow.foreign .agrow { display: none; }
+.arow.foreign .atime { opacity: 0.55; }
+
 /* ================= Vista semanal ================= */
 .weeks.wkview { display: block; }
 .weekdays, .dots { transition: opacity 0.35s ease, transform 0.45s cubic-bezier(0.22, 1, 0.36, 1); }

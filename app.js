@@ -55,10 +55,16 @@ function activeLayer() {
   const all = (k) => [...new Set(ls.flatMap((l) => l[k] || []))];
   return { id: ui.layer, name: ls.map((l) => l.name).join(' + '), projectIds: all('projectIds'), categoryIds: all('categoryIds'), subscriptionIds: all('subscriptionIds'), includeLoose: ls.some((l) => l.includeLoose), multi: ls.length };
 }
+const isBlockingX = (kind, x) => !!(x.blocking || (kind === 'ext' && byId(S.db.subscriptions || [], x.subId)?.blocking));
 function inLayer(kind, x) {
   const l = activeLayer();
   if (!l) return true;
-  if (x.blocking || (kind === 'ext' && byId(S.db.subscriptions || [], x.subId)?.blocking)) return true; // el tiempo bloqueado se ve en todas las capas
+  if (isBlockingX(kind, x)) return true; // el tiempo bloqueado se ve en todas las capas
+  return inLayerOwn(kind, x, l);
+}
+// Tiempo bloqueado de otra capa: se ve, pero solo como forma gris de fondo, sin texto
+const foreign = (kind, x) => { const l = activeLayer(); return !!l && isBlockingX(kind, x) && !inLayerOwn(kind, x, l); };
+function inLayerOwn(kind, x, l) {
   if (kind === 'ext') return l.subscriptionIds.includes(x.subId);
   if (kind === 'goal' && !x.projectId) return !!l.includeLoose;
   // Proyecto entero, o solo alguna de sus subcategorías
@@ -350,15 +356,16 @@ function weekItems(ws) {
   for (const g of S.db.goals || []) if (g.date >= ws && g.date <= we && inLayer('goal', g)) items.push({ kind: 'goal', id: g.id, s: diffDays(ws, g.date), e: diffDays(ws, g.date), x: g });
   for (const b of S.db.blocks) {
     if (blockEnd(b) < ws || b.date > we || !inLayer('blk', b)) continue;
-    items.push({ kind: 'blk', id: b.id, s: Math.max(0, diffDays(ws, b.date)), e: Math.min(6, diffDays(ws, blockEnd(b))), x: b, cl: b.date < ws, cr: blockEnd(b) > we });
+    items.push({ kind: 'blk', id: b.id, s: Math.max(0, diffDays(ws, b.date)), e: Math.min(6, diffDays(ws, blockEnd(b))), x: b, cl: b.date < ws, cr: blockEnd(b) > we, fg: foreign('blk', b) });
   }
   for (const e of S.db.extEvents || []) {
     const end = e.endDate || e.date;
     if (end < ws || e.date > we || !inLayer('ext', e)) continue;
-    items.push({ kind: 'ext', id: e.id, s: Math.max(0, diffDays(ws, e.date)), e: Math.min(6, diffDays(ws, end)), x: e, cl: e.date < ws, cr: end > we });
+    items.push({ kind: 'ext', id: e.id, s: Math.max(0, diffDays(ws, e.date)), e: Math.min(6, diffDays(ws, end)), x: e, cl: e.date < ws, cr: end > we, fg: foreign('ext', e) });
   }
+  for (const it of items) if (it.fg === undefined) it.fg = foreign(it.kind, it.x);
   const rank = { ms: 0, goal: 1, blk: 2, ext: 3 };
-  items.sort((a, b) => rank[a.kind] - rank[b.kind] || a.s - b.s || b.e - b.s - (a.e - a.s) || (a.x.start || '').localeCompare(b.x.start || ''));
+  items.sort((a, b) => (a.fg ? 1 : 0) - (b.fg ? 1 : 0) || rank[a.kind] - rank[b.kind] || a.s - b.s || b.e - b.s - (a.e - a.s) || (a.x.start || '').localeCompare(b.x.start || ''));
   const lanes = []; // columnas ocupadas por carril
   for (const it of items) {
     let l = lanes.findIndex((used) => !used.some((c) => c >= it.s && c <= it.e));
@@ -411,15 +418,15 @@ function weekViewHTML() {
   for (const b of S.db.blocks) {
     if (!(b.blocking || inLayer('blk', b))) continue;
     const st = S.stats.blocks[b.id];
-    for (const d of days) if (b.date <= d && blockEnd(b) >= d) put(d, { type: 'block', id: b.id, title: b.title, color: proj(b.projectId).color, from: minsOf(b.start), to: b.end ? minsOf(b.end) : minsOf(b.start) + 60, blocking: b.blocking, done: st?.pct === 100, icon: b.pausedAt ? 'pause' : isFixedB(b) && !b.blocking ? 'pin' : '' });
+    for (const d of days) if (b.date <= d && blockEnd(b) >= d) put(d, { fg: foreign('blk', b), type: 'block', id: b.id, title: b.title, color: proj(b.projectId).color, from: minsOf(b.start), to: b.end ? minsOf(b.end) : minsOf(b.start) + 60, blocking: b.blocking, done: st?.pct === 100, icon: b.pausedAt ? 'pause' : isFixedB(b) && !b.blocking ? 'pin' : '' });
   }
   for (const e of S.db.extEvents || []) {
     const blocking = subBlocking(e.subId);
     if (!(blocking || inLayer('ext', e))) continue;
-    for (const d of days) if (e.date <= d && (e.endDate || e.date) >= d) put(d, { type: 'ext', id: e.id, title: e.title.trim(), color: subColor(e.subId), from: minsOf(e.start), to: e.end ? minsOf(e.end) : minsOf(e.start) + 60, blocking });
+    for (const d of days) if (e.date <= d && (e.endDate || e.date) >= d) put(d, { fg: foreign('ext', e), type: 'ext', id: e.id, title: e.title.trim(), color: subColor(e.subId), from: minsOf(e.start), to: e.end ? minsOf(e.end) : minsOf(e.start) + 60, blocking });
   }
-  for (const m of S.db.milestones) if (timed[m.date] && inLayer('ms', m)) put(m.date, { type: 'ms', id: m.id, title: m.title, color: proj(m.projectId).color, from: minsOf(m.time), to: minsOf(m.time) + (m.blocking ? 120 : 60), icon: KIND_ICON[m.kind], blocking: m.blocking });
-  for (const g of S.db.goals || []) if (timed[g.date] && inLayer('goal', g)) put(g.date, { type: 'goal', id: g.id, title: g.title, color: goalColor(g), from: minsOf(g.time), to: minsOf(g.time) + (g.blocking ? 60 : 30), icon: 'target', done: g.done, blocking: g.blocking });
+  for (const m of S.db.milestones) if (timed[m.date] && inLayer('ms', m)) put(m.date, { fg: foreign('ms', m), type: 'ms', id: m.id, title: m.title, color: proj(m.projectId).color, from: minsOf(m.time), to: minsOf(m.time) + (m.blocking ? 120 : 60), icon: KIND_ICON[m.kind], blocking: m.blocking });
+  for (const g of S.db.goals || []) if (timed[g.date] && inLayer('goal', g)) put(g.date, { fg: foreign('goal', g), type: 'goal', id: g.id, title: g.title, color: goalColor(g), from: minsOf(g.time), to: minsOf(g.time) + (g.blocking ? 60 : 30), icon: 'target', done: g.done, blocking: g.blocking });
   for (const t of rmAll()) if (timed[t.due] && !t.done) put(t.due, { type: 'todo', id: t.id, title: t.title, color: rmColor(t), from: minsOf(t.time), to: minsOf(t.time) + 30, icon: 'checklist' });
   // Horas visibles: de 8 a 21, ampliando si hay algo antes o después
   let h0 = 8 * 60, h1 = 21 * 60;
@@ -434,13 +441,15 @@ function weekViewHTML() {
   const itemHTML = (d, it, left, width) => {
     const len = Math.min(it.to, h1) - it.from;
     const act = it.type === 'todo' ? 'data-act="rm-goto"' : `data-act="open" data-type="${it.type}"`;
+    if (it.fg) return `<div class="wk-it foreign" ${act} data-id="${esc(it.id)}" data-key="wi-${esc(it.id)}-${d}" style="top:calc(${it.from - h0}px * var(--ppm));height:max(16px, calc(${len}px * var(--ppm) - 2px));left:0;width:100%" title="Tiempo bloqueado de otra capa"></div>`;
     return `<div class="wk-it ${it.type} ${it.blocking ? 'blocking' : ''} ${it.done ? 'done' : ''} ${len * ppm < 32 ? 'thin' : ''}" ${act} data-id="${esc(it.id)}" data-key="wi-${esc(it.id)}-${d}" style="top:calc(${it.from - h0}px * var(--ppm));height:max(16px, calc(${len}px * var(--ppm) - 2px));left:${left}%;width:${width}%;--c:${it.color};--ink:${ink(it.color)}" title="${esc(it.title)} · ${hhmmOf(it.from)}–${hhmmOf(it.to)}">
       <b>${hhmmOf(it.from)}</b><span>${it.icon ? icon(it.icon, 10) : ''}${esc(it.title)}</span></div>`;
   };
   const cols = days.map((d) => {
     // Carriles para lo que se solapa
-    const list = timed[d].sort((a, b) => a.from - b.from || b.to - a.to);
-    let html = '', group = [], end = -1;
+    // Lo bloqueado de otras capas va de fondo, a todo el ancho, y no ocupa carril
+    const list = timed[d].filter((it) => !it.fg).sort((a, b) => a.from - b.from || b.to - a.to);
+    let html = timed[d].filter((it) => it.fg).map((it) => itemHTML(d, it, 0, 100)).join(''), group = [], end = -1;
     const flush = () => {
       const lanes = [];
       for (const it of group) {
@@ -465,7 +474,7 @@ function weekViewHTML() {
   for (let m = h0; m <= h1; m += 60) hours.push(`<span style="top:calc(${m - h0}px * var(--ppm))">${m / 60}</span>`);
   return `<div class="wk" data-key="wk">
     <div class="wk-row wk-head" data-key="wkh"><div class="wk-gut"></div>${days.map((d, i) => `<button class="wk-dh ${d === S.today ? 'today' : ''} ${parse(d).getDay() % 6 === 0 ? 'we' : ''}" data-act="open-day" data-date="${d}" data-key="wdh-${d}"><span class="wd">${WD_SHORT[(parse(d).getDay() + 6) % 7]}</span><span class="dn">${parse(d).getDate()}</span></button>`).join('')}</div>
-    ${adRows ? `<div class="wk-row wk-allday" data-key="wka"><div class="wk-gut"></div>${days.map((d) => `<div class="wk-ad" data-key="wad-${d}">${allday[d].slice(0, 3).map((it) => `<div class="wk-chip ${it.type} ${it.blocking ? 'blocking' : ''} ${it.done ? 'done' : ''}" ${it.type === 'todo' ? 'data-act="rm-goto"' : `data-act="open" data-type="${it.type}"`} data-id="${esc(it.id)}" data-key="wac-${esc(it.id)}-${d}" style="--c:${it.color};--ink:${ink(it.color)}" title="${esc(it.title)}">${it.icon ? icon(it.icon, 10) : ''}${esc(it.title)}</div>`).join('')}${allday[d].length > 3 ? `<span class="wk-more">+${allday[d].length - 3}</span>` : ''}</div>`).join('')}</div>` : ''}
+    ${adRows ? `<div class="wk-row wk-allday" data-key="wka"><div class="wk-gut"></div>${days.map((d) => `<div class="wk-ad" data-key="wad-${d}">${allday[d].slice(0, 3).map((it) => it.fg ? `<div class="wk-chip foreign" data-key="wac-${esc(it.id)}-${d}" title="Tiempo bloqueado de otra capa"></div>` : `<div class="wk-chip ${it.type} ${it.blocking ? 'blocking' : ''} ${it.done ? 'done' : ''}" ${it.type === 'todo' ? 'data-act="rm-goto"' : `data-act="open" data-type="${it.type}"`} data-id="${esc(it.id)}" data-key="wac-${esc(it.id)}-${d}" style="--c:${it.color};--ink:${ink(it.color)}" title="${esc(it.title)}">${it.icon ? icon(it.icon, 10) : ''}${esc(it.title)}</div>`).join('')}${allday[d].length > 3 ? `<span class="wk-more">+${allday[d].length - 3}</span>` : ''}</div>`).join('')}</div>` : ''}
     <div class="wk-body" data-key="wkb"><div class="wk-grid" data-key="wkg" data-h0="${h0}" data-ppm="${ppm}" style="height:calc(${h1 - h0}px * var(--ppm));--ppm:${ppm}">
       <div class="wk-hours" data-key="wkhr">${hours.join('')}</div>${cols.join('')}</div></div>
   </div>`;
@@ -582,7 +591,10 @@ function weeksHTML() {
       const p = it.kind === 'ext' ? { color: subColor(it.x.subId) } : it.x.projectId ? proj(it.x.projectId) : { color: '#d97757' };
       const key = `${it.kind}-${it.id}-${w}`;
       const style = `left:calc(${(it.s / 7) * 100}% + 3px);width:calc(${((it.e - it.s + 1) / 7) * 100}% - 6px);top:${G.top + it.lane * G.step}px;--c:${p.color};--ink:${ink(p.color)};--i:${n++}`;
-      if (it.kind === 'ext') {
+      if (it.fg) {
+        const type = { blk: 'block', ext: 'ext', ms: 'ms', goal: 'goal' }[it.kind];
+        bars += `<div class="bar foreign ${it.cl ? 'cl' : ''} ${it.cr ? 'cr' : ''}" data-act="open" data-type="${type}" data-id="${esc(it.id)}" data-key="${esc(key)}" style="${style}" title="Tiempo bloqueado de otra capa" aria-label="Tiempo bloqueado"></div>`;
+      } else if (it.kind === 'ext') {
         bars += `<div class="bar ext ${subBlocking(it.x.subId) ? 'blocking' : ''} ${it.cl ? 'cl' : ''} ${it.cr ? 'cr' : ''}" data-act="open" data-type="ext" data-id="${esc(it.id)}" data-key="${esc(key)}" style="${style}" title="${esc(it.x.title)}">${it.x.start && !it.cl && !S.web ? it.x.start + ' ' : ''}${esc(it.x.title)}</div>`;
       } else if (it.kind === 'goal') {
         bars += `<div class="bar goal ${it.x.blocking ? 'blocking' : ''} ${it.x.done ? 'done' : ''}" data-act="open" data-type="goal" data-id="${it.id}" data-key="${key}" style="${style}" title="${esc(it.x.title)}">${icon(it.x.done ? 'check' : 'target', 11)}<span>${esc(it.x.title)}</span></div>`;
@@ -778,10 +790,10 @@ function cardExt(id) {
 }
 
 function cardDay(d) {
-  const ms = S.db.milestones.filter((m) => m.date === d && inLayer('ms', m));
-  const blocks = S.db.blocks.filter((b) => b.date <= d && blockEnd(b) >= d && inLayer('blk', b));
-  const goals = (S.db.goals || []).filter((g) => g.date === d && inLayer('goal', g));
-  const exts = (S.db.extEvents || []).filter((e) => e.date <= d && (e.endDate || e.date) >= d && inLayer('ext', e)).sort((a, b) => (a.start || '').localeCompare(b.start || ''));
+  const ms = S.db.milestones.filter((m) => m.date === d && inLayer('ms', m) && !foreign('ms', m)); // lo bloqueado de otras capas no se lista
+  const blocks = S.db.blocks.filter((b) => b.date <= d && blockEnd(b) >= d && inLayer('blk', b) && !foreign('blk', b));
+  const goals = (S.db.goals || []).filter((g) => g.date === d && inLayer('goal', g) && !foreign('goal', g));
+  const exts = (S.db.extEvents || []).filter((e) => e.date <= d && (e.endDate || e.date) >= d && inLayer('ext', e) && !foreign('ext', e)).sort((a, b) => (a.start || '').localeCompare(b.start || ''));
   const manual = S.db.days[d]?.status || '';
   const st = S.days[d];
   const row = (type, id, color, title, meta) => `<div class="list-row" data-act="swap" data-type="${type}" data-id="${id}"><span class="dotc" style="--c:${color}"></span><div class="grow"><div class="ttl">${esc(title)}</div><div class="meta">${meta}</div></div>${icon('chevR', 14)}</div>`;
@@ -1023,10 +1035,11 @@ function mItems(d) {
   for (const g of S.db.goals || []) if (g.date === d && inLayer('goal', g)) out.push({ type: 'goal', id: g.id, color: goalColor(g), title: g.title, sub: `Objetivo${g.projectId ? ' · ' + projLabel(g.projectId, g.categoryId) : ''}`, time: g.time || '', done: g.done, icon: 'target' });
   for (const b of S.db.blocks) if (b.date <= d && blockEnd(b) >= d && inLayer('blk', b)) {
     const st = S.stats.blocks[b.id];
+    if (foreign('blk', b)) { out.push({ type: 'block', id: b.id, fg: true, color: '#888', title: '', sub: '', time: b.start ? `${b.start}${b.end ? '–' + b.end : ''}` : '' }); continue; }
     out.push({ type: 'block', id: b.id, color: proj(b.projectId).color, title: b.title, sub: `${projLabel(b.projectId, b.categoryId)} · ${b.pausedAt ? 'en pausa' : (b.event ?? !!b.blocking) ? 'evento' : st.manual ? (b.done ? 'hecho' : 'pendiente') : `${st.done}/${st.total} tareas`}${isFixedB(b) ? ' · fijo' : ''}`, time: b.start ? `${b.start}${b.end ? '–' + b.end : ''}` : '', done: st.pct === 100, icon: b.pausedAt ? 'pause' : isFixedB(b) ? 'pin' : '' });
   }
   for (const t of rmAll()) if (t.due === d && (!t.done || rmRecent.has(t.id))) out.push({ type: 'todo', id: t.id, color: rmColor(t), title: t.title, sub: esc(rmListOf(t.listId).name) + (t.tags?.length ? ' · ' + t.tags.map((g) => '#' + esc(g)).join(' ') : ''), time: t.time || '', done: t.done, icon: t.flagged ? 'flag' : '' });
-  for (const e of S.db.extEvents || []) if (e.date <= d && (e.endDate || e.date) >= d && inLayer('ext', e)) out.push({ type: 'ext', id: e.id, color: subColor(e.subId), title: e.title, sub: esc(byId(S.db.subscriptions || [], e.subId)?.name || ''), time: e.start ? `${e.start}${e.end ? '–' + e.end : ''}` : '' });
+  for (const e of S.db.extEvents || []) if (e.date <= d && (e.endDate || e.date) >= d && inLayer('ext', e)) out.push(foreign('ext', e) ? { type: 'ext', id: e.id, fg: true, color: '#888', title: '', sub: '', time: e.start ? `${e.start}${e.end ? '–' + e.end : ''}` : '' } : { type: 'ext', id: e.id, color: subColor(e.subId), title: e.title, sub: esc(byId(S.db.subscriptions || [], e.subId)?.name || ''), time: e.start ? `${e.start}${e.end ? '–' + e.end : ''}` : '' });
   // Primero lo de todo el día, luego por hora
   return out.sort((a, b) => (a.time ? 1 : 0) - (b.time ? 1 : 0) || a.time.localeCompare(b.time));
 }
@@ -1042,6 +1055,7 @@ function dayFull(d) {
   // Fila como en el Calendario de iOS: hora de inicio y fin a la izquierda, raya de color y título en hasta dos líneas
   const row = (it) => {
     const [a, b] = it.time ? it.time.split('–') : [];
+    if (it.fg) return `<div class="arow foreign" data-key="df-${esc(it.id)}" title="Tiempo bloqueado de otra capa">${a ? `<div class="atime"><b>${a}</b>${b ? `<span>${b}</span>` : ''}</div>` : ''}<span class="abar"></span><div class="agrow"></div></div>`;
     const live = d === S.today && !it.done && a && minsOf(a) <= nowM && nowM < (b ? minsOf(b) : minsOf(a) + 60);
     return `<div class="arow ${it.done ? 'done' : ''} ${live ? 'now' : ''}" style="--c:${it.color}" data-act="${it.type === 'todo' ? 'rm-goto' : 'swap'}" data-type="${it.type}" data-id="${esc(it.id)}" data-key="df-${esc(it.id)}">
       ${a ? `<div class="atime"><b>${a}</b>${b ? `<span>${b}</span>` : ''}</div>` : ''}<span class="abar"></span>
