@@ -2091,31 +2091,40 @@ document.addEventListener('touchend', async (e) => {
 }, { passive: true });
 document.addEventListener('touchcancel', () => { if (rsw?.on) rmSettle(rsw.row, 0); rsw = null; }, { passive: true });
 
+// Al marcar uno se queda un momento a la vista antes de irse; si lo vuelves a tocar en ese rato, se recupera
+const rmLeaving = new Map(); // id → temporizador de salida
 async function rmToggle(el, id) {
   const t = byId(rmAll(), id);
   if (!t) return;
   const done = !t.done;
+  const fam = [id, ...rmDesc(id).map((k) => k.id)];
   if (el.classList.contains('task')) popCheck(el, done);
   else {
     const row = el.closest('.rm-row') || el;
     row.classList.toggle('done', done);
-    row.classList.remove('pop');
+    row.classList.remove('pop', 'rm-out');
     void row.offsetWidth;
     row.classList.add('pop');
     if (done) { const r = el.getBoundingClientRect(); burst(r.left + r.width / 2, r.top + r.height / 2, rmColor(t)); }
   }
   ui.holdUntil = Date.now() + 600;
+  clearTimeout(rmLeaving.get(id));
+  rmLeaving.delete(id);
   if (done) {
-    rmRecent.add(id);
-    rmDesc(id).forEach((k) => rmRecent.add(k.id));
-    setTimeout(() => {
-      [id, ...rmDesc(id).map((k) => k.id)].forEach((k) => rmRecent.delete(k));
-      if (ui.rm.showDone) return;
-      const rows = [id, ...rmDesc(id).map((k) => k.id)].map((k) => $(`.rm-row[data-id="${k}"]`)).filter(Boolean);
+    fam.forEach((k) => rmRecent.add(k));
+    rmLeaving.set(id, setTimeout(() => {
+      if (!rmLeaving.has(id)) return;
+      if (ui.rm.showDone) return void (rmLeaving.delete(id), fam.forEach((k) => rmRecent.delete(k)));
+      const rows = fam.map((k) => $(`.rm-row[data-id="${k}"]`)).filter(Boolean);
       rows.forEach((r) => r.classList.add('rm-out'));
-      setTimeout(() => rmReload(), rows.length ? 320 : 0);
-    }, 1400);
-  }
+      // Aún se puede recuperar mientras se desvanece; solo al terminar desaparece de verdad
+      rmLeaving.set(id, setTimeout(() => {
+        rmLeaving.delete(id);
+        fam.forEach((k) => rmRecent.delete(k));
+        rmReload();
+      }, rows.length ? 320 : 0));
+    }, 1400));
+  } else fam.forEach((k) => rmRecent.delete(k)); // recuperado: se queda donde estaba
   await run('update_todo', { id, done });
 }
 

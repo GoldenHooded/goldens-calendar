@@ -594,9 +594,10 @@ body.web .rm-title-in, .rm-title-in { font: inherit; font-size: 30px; color: inh
 .rm-fold { width: 16px; height: 22px; flex: none; border: 0; background: none; color: var(--faint); display: grid; place-items: center; padding: 0; cursor: pointer; transition: transform 0.4s var(--spring), color 0.2s; }
 .rm-fold.on { transform: rotate(90deg); }
 @media (hover: hover) { .rm-fold:hover { color: var(--text); } }
-.rm-check { width: 22px; height: 22px; border-radius: 50%; border: 1.7px solid var(--line-strong); flex: none; background: none; padding: 0; display: grid; place-items: center; cursor: pointer; transition: border-color 0.2s, transform 0.45s var(--spring); }
+.rm-check { position: relative; width: 22px; height: 22px; border-radius: 50%; border: 2px solid var(--line-strong); flex: none; background: none; padding: 0; display: block; cursor: pointer; transition: border-color 0.2s, transform 0.45s var(--spring); }
 @media (hover: hover) { .rm-row:not(.draft) .rm-check:hover { border-color: var(--c); } }
-.rm-check i { width: 14px; height: 14px; border-radius: 50%; background: var(--c); transform: scale(0); transition: transform 0.4s var(--spring); }
+/* Círculo interior centrado con medidas enteras (sin medios píxeles que lo descentren) */
+.rm-check i { position: absolute; inset: 2px; border-radius: 50%; background: var(--c); transform: scale(0); transition: transform 0.4s var(--spring); }
 .rm-row.done .rm-check { border-color: var(--c); }
 .rm-row.done .rm-check i { transform: scale(1); }
 .rm-row.pop .rm-check { animation: checkPop 0.55s var(--spring); }
@@ -912,7 +913,8 @@ body.web .ctx-item .k { display: none; } /* atajos de teclado: no aplican al ded
 /* --- Recordatorios --- */
 body.web .rm-row { background: var(--panel); min-height: 48px; }
 body.web .rm-t { font-size: 16px; line-height: 23px; }
-body.web .rm-check { width: 24px; height: 24px; position: relative; }
+body.web .rm-check { width: 24px; height: 24px; }
+body.web .rm-check i { inset: 3px; }
 body.web .rm-check::after { content: ''; position: absolute; inset: -10px; } /* área de toque de 44 px */
 body.web .rm-fold { position: relative; }
 body.web .rm-fold::after { content: ''; position: absolute; inset: -10px -6px; }
