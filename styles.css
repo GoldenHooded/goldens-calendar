@@ -544,6 +544,11 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
 .cat-add:focus { border-style: solid; border-color: var(--c); width: 170px; }
 body.web .cat-chip, body.web .cat-add { height: 32px; border-radius: 16px; }
 
+/* Capas: subcategorías junto a su proyecto */
+.pgroup { display: inline-flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.pchip.cat { font-size: 11.5px; padding: 0 9px; height: 24px; opacity: 0.9; }
+.pchip.part { border-style: dashed; border-color: color-mix(in srgb, var(--c) 55%, transparent); }
+
 /* MCP remoto */
 .mcp-url { display: flex; gap: 8px; align-items: center; }
 .mcp-url code { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: Consolas, 'Cascadia Mono', monospace; font-size: 12px; background: var(--soft); border-radius: 9px; padding: 7px 10px; }

@@ -49,7 +49,8 @@ function inLayer(kind, x) {
   if (!l) return true;
   if (kind === 'ext') return l.subscriptionIds.includes(x.subId);
   if (kind === 'goal' && !x.projectId) return !!l.includeLoose;
-  return l.projectIds.includes(x.projectId);
+  // Proyecto entero, o solo alguna de sus subcategorías
+  return l.projectIds.includes(x.projectId) || (!!x.categoryId && (l.categoryIds || []).includes(x.categoryId));
 }
 const subColor = (id) => byId(S.db.subscriptions || [], id)?.color || '#8c8c84';
 const byId = (list, id) => list.find((x) => x.id === id);
@@ -243,7 +244,7 @@ function renderDock() {
 const paletteRow = (id, current, kind) => `<div class="palette" data-key="pal-${id}">${PALETTE.map((c, i) => `<button class="${c === current ? 'on' : ''}" style="--c:${c};--n:${i}" data-act="set-color" data-kind="${kind}" data-id="${id}" data-c="${c}"></button>`).join('')}</div>`;
 
 function layerMenu() {
-  const count = (l) => l.projectIds.length + l.subscriptionIds.length;
+  const count = (l) => l.projectIds.length + (l.categoryIds || []).length + l.subscriptionIds.length;
   return `<div class="layer-menu">
     <button class="${ui.layer === 'all' ? 'on' : ''}" data-act="set-layer" data-id="all">${icon('layers', 14)} Todo</button>
     ${(S.db.layers || []).map((l) => `<button class="${ui.layer === l.id ? 'on' : ''}" data-act="set-layer" data-id="${l.id}">${icon('layers', 14)} ${esc(l.name)}<span class="n">${count(l)}</span></button>`).join('')}
@@ -1552,11 +1553,11 @@ function howOrganize() {
           <div class="sec-d" style="margin-top:10px">En Google Calendar: Configuración → tu calendario → «Dirección secreta en formato iCal».</div>`)}
       </div>
       <div>
-        ${sec('sec-layers', 'layers', 'Capas', 'Cada capa es una vista del calendario. Marca qué proyectos y calendarios entran en cada una; un proyecto puede estar en varias.', `
+        ${sec('sec-layers', 'layers', 'Capas', 'Cada capa es una vista del calendario. Marca qué proyectos, subcategorías y calendarios entran en cada una; pueden estar en varias.', `
           ${(S.db.layers || []).map((l) => `<div class="layer-box" data-key="ly-${l.id}">
             <div class="layer-head">${icon('layers', 14)}<input class="layer-name" data-layer-name="${l.id}" value="${esc(l.name)}"><button class="ibtn" data-act="del-layer" data-id="${l.id}" title="Eliminar capa">${icon('trash', 13)}</button></div>
             <div class="chips-row">
-              ${S.db.projects.map((p) => `<button class="pchip ${l.projectIds.includes(p.id) ? 'on' : ''}" style="--c:${p.color}" data-act="layer-toggle" data-layer="${l.id}" data-kind="project" data-id="${p.id}">${esc(p.name)}</button>`).join('')}
+              ${S.db.projects.map((p) => `<span class="pgroup"><button class="pchip ${l.projectIds.includes(p.id) ? 'on' : (p.categories || []).some((c) => (l.categoryIds || []).includes(c.id)) ? 'part' : ''}" style="--c:${p.color}" data-act="layer-toggle" data-layer="${l.id}" data-kind="project" data-id="${p.id}">${esc(p.name)}</button>${(p.categories || []).map((c) => `<button class="pchip cat ${l.projectIds.includes(p.id) || (l.categoryIds || []).includes(c.id) ? 'on' : ''}" style="--c:${p.color}" data-act="layer-toggle" data-layer="${l.id}" data-kind="category" data-project="${p.id}" data-id="${c.id}" title="${esc(p.name)} › ${esc(c.name)}">${esc(c.name)}</button>`).join('')}</span>`).join('')}
               ${(S.db.subscriptions || []).map((s) => `<button class="pchip sub ${l.subscriptionIds.includes(s.id) ? 'on' : ''}" style="--c:${s.color}" data-act="layer-toggle" data-layer="${l.id}" data-kind="sub" data-id="${s.id}">${esc(s.name)}</button>`).join('')}
               <button class="pchip ${l.includeLoose ? 'on' : ''}" data-act="layer-toggle" data-layer="${l.id}" data-kind="loose">Objetivos sin proyecto</button>
             </div></div>`).join('') || '<div class="hint">Aún no hay capas. Sin capas, el calendario muestra todo.</div>'}
@@ -1884,8 +1885,22 @@ const actions = {
   'layer-toggle': async (el) => {
     const l = byId(S.db.layers, el.dataset.layer);
     const k = el.dataset.kind, id = el.dataset.id;
-    const patch = k === 'loose' ? { includeLoose: !l.includeLoose }
-      : k === 'project' ? { projectIds: l.projectIds.includes(id) ? l.projectIds.filter((x) => x !== id) : [...l.projectIds, id] }
+    const cats = (pid) => (byId(S.db.projects, pid)?.categories || []).map((c) => c.id);
+    const lc = l.categoryIds || [];
+    let patch;
+    if (k === 'category') {
+      const pid = el.dataset.project;
+      if (l.projectIds.includes(pid)) // el proyecto estaba entero: queda todo menos esta subcategoría
+        patch = { projectIds: l.projectIds.filter((x) => x !== pid), categoryIds: [...new Set([...lc, ...cats(pid).filter((c) => c !== id)])] };
+      else {
+        const next = lc.includes(id) ? lc.filter((x) => x !== id) : [...lc, id];
+        const all = cats(pid).every((c) => next.includes(c)); // todas marcadas: pasa a proyecto entero
+        patch = all ? { projectIds: [...l.projectIds, pid], categoryIds: next.filter((c) => !cats(pid).includes(c)) } : { categoryIds: next };
+      }
+    } else if (k === 'project') {
+      const on = l.projectIds.includes(id);
+      patch = { projectIds: on ? l.projectIds.filter((x) => x !== id) : [...l.projectIds, id], categoryIds: lc.filter((c) => !cats(id).includes(c)) };
+    } else patch = k === 'loose' ? { includeLoose: !l.includeLoose }
       : { subscriptionIds: l.subscriptionIds.includes(id) ? l.subscriptionIds.filter((x) => x !== id) : [...l.subscriptionIds, id] };
     el.classList.toggle('on');
     await run('update_layer', { id: l.id, ...patch });
