@@ -392,7 +392,7 @@ function renderCal(dir = 0, slide = true) {
 }
 // ---------- Vista semanal: los días grandes con su time blocking ----------
 const WD_SHORT = ['LUN', 'MAR', 'MIÉ', 'JUE', 'VIE', 'SÁB', 'DOM'];
-const minsOf = (h) => (h ? +h.slice(0, 2) * 60 + +h.slice(3, 5) : null);
+const minsOf = (h) => { const m = /^(\d{1,2})[:.h](\d{2})/.exec(String(h || '').trim()); return m ? Math.min(23, +m[1]) * 60 + Math.min(59, +m[2]) : null; };
 const hhmmOf = (m) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
 const mondayOf = (d) => addDays(d, -((parse(d).getDay() + 6) % 7));
 const subBlocking = (id) => !!byId(S.db.subscriptions || [], id)?.blocking;
