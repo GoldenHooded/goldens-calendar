@@ -55,6 +55,11 @@ const subColor = (id) => byId(S.db.subscriptions || [], id)?.color || '#8c8c84';
 const byId = (list, id) => list.find((x) => x.id === id);
 const proj = (id) => byId(S.db.projects, id) || { name: '—', color: '#999' };
 const blockEnd = (b) => b.endDate || b.date;
+// Subcategorías de un proyecto: «Termodinámica › Prácticas»
+const catOf = (pid, cid) => (cid && (byId(S.db.projects, pid)?.categories || []).find((c) => c.id === cid)) || null;
+const projLabel = (pid, cid) => esc(proj(pid).name) + (catOf(pid, cid) ? ` › ${esc(catOf(pid, cid).name)}` : '');
+const catOptions = (pid, sel) => `<option value="">— Ninguna —</option>` + (byId(S.db.projects, pid)?.categories || []).map((c) => `<option value="${c.id}" ${c.id === sel ? 'selected' : ''}>${esc(c.name)}</option>`).join('');
+const catField = (pid, sel) => `<label class="field" data-catfield ${(byId(S.db.projects, pid)?.categories || []).length ? '' : 'hidden'}><span>Subcategoría</span><select class="input" name="categoryId">${catOptions(pid, sel)}</select></label>`;
 const ink = (hex) => {
   const n = parseInt(hex.slice(1), 16);
   const l = (0.299 * (n >> 16) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)) / 255;
@@ -301,10 +306,10 @@ function renderCal(dir = 0, slide = true) {
       } else if (it.kind === 'goal') {
         bars += `<div class="bar goal ${it.x.done ? 'done' : ''}" data-act="open" data-type="goal" data-id="${it.id}" data-key="${key}" style="${style}" title="${esc(it.x.title)}">${icon(it.x.done ? 'check' : 'target', 11)}<span>${esc(it.x.title)}</span></div>`;
       } else if (it.kind === 'ms') {
-        bars += `<div class="bar ms" data-act="open" data-type="ms" data-id="${it.id}" data-key="${key}" style="${style}" title="${esc(it.x.title)}">${icon(KIND_ICON[it.x.kind] || 'flag', 11)}<span>${esc(it.x.title)}</span></div>`;
+        bars += `<div class="bar ms" data-act="open" data-type="ms" data-id="${it.id}" data-key="${key}" style="${style}" title="${esc(it.x.title)} · ${projLabel(it.x.projectId, it.x.categoryId)}">${icon(KIND_ICON[it.x.kind] || 'flag', 11)}<span>${esc(it.x.title)}</span></div>`;
       } else {
         const st = S.stats.blocks[it.id];
-        bars += `<div class="bar blk ${st.pct === 100 ? 'done' : ''} ${it.cl ? 'cl' : ''} ${it.cr ? 'cr' : ''}" data-block="${it.id}" data-act="open" data-type="block" data-id="${it.id}" data-key="${key}" style="${style}" title="${esc(it.x.title)}">${esc(it.x.title)}</div>`;
+        bars += `<div class="bar blk ${st.pct === 100 ? 'done' : ''} ${it.cl ? 'cl' : ''} ${it.cr ? 'cr' : ''}" data-block="${it.id}" data-act="open" data-type="block" data-id="${it.id}" data-key="${key}" style="${style}" title="${esc(it.x.title)} · ${projLabel(it.x.projectId, it.x.categoryId)}">${esc(it.x.title)}</div>`;
       }
     }
     let cells = '';
@@ -356,7 +361,7 @@ function cardBlock(id) {
   const past = blockEnd(b) < S.today;
   return `
     <div class="c-head"><div class="t"><div class="c-title">${esc(b.title)}</div>
-      <div class="c-meta"><span class="tag" style="--c:${p.color}">${esc(p.name)}</span>${b.endDate ? `${fmtShort(b.date)} → ${fmtShort(b.endDate)}` : fmtLong(b.date)}${b.start ? ` · ${b.start}${b.end ? '–' + b.end : ''}` : ''}</div></div>
+      <div class="c-meta"><span class="tag" style="--c:${p.color}">${projLabel(b.projectId, b.categoryId)}</span>${b.endDate ? `${fmtShort(b.date)} → ${fmtShort(b.endDate)}` : fmtLong(b.date)}${b.start ? ` · ${b.start}${b.end ? '–' + b.end : ''}` : ''}</div></div>
       <button class="ibtn" data-act="close-card">${icon('x', 15)}</button></div>
     <div class="c-hero" style="--c:${p.color}">${ring('cb-' + id, st.pct, p.color, 48, 5)}
       <div><div style="font-weight:600">${st.carried ? 'Pendientes movidos' : st.manual ? (b.done ? 'Hecho' : 'Sin tareas') : `${st.done} de ${st.total} hechas`}</div>
@@ -380,7 +385,7 @@ function cardMilestone(id) {
   const planned = S.db.blocks.some((b) => b.milestoneId === id && blockEnd(b) >= S.today);
   return `
     <div class="c-head"><div class="t"><div class="c-title">${esc(m.title)}</div>
-      <div class="c-meta"><span class="tag" style="--c:${p.color}">${icon(KIND_ICON[m.kind], 11)} ${esc(p.name)}</span>${fmtLong(m.date)}${m.time ? ' · ' + m.time : ''}</div></div>
+      <div class="c-meta"><span class="tag" style="--c:${p.color}">${icon(KIND_ICON[m.kind], 11)} ${projLabel(m.projectId, m.categoryId)}</span>${fmtLong(m.date)}${m.time ? ' · ' + m.time : ''}</div></div>
       <button class="ibtn" data-act="close-card">${icon('x', 15)}</button></div>
     <div class="c-hero" style="--c:${p.color}"><div style="flex:1"><div class="big">${n < 0 ? '✓' : n}</div>
       <div class="lbl">${n < 0 ? 'Ya pasó' : n === 0 ? '¡Es hoy!' : `${n === 1 ? 'día' : 'días'} para ${ART[m.kind]}`}${n > 0 && pending ? ` · ~${(pending / n).toFixed(pending / n < 10 ? 1 : 0)} tareas/día` : ''}</div></div>
@@ -406,7 +411,7 @@ function cardGoal(id) {
   const n = diffDays(S.today, g.date);
   return `
     <div class="c-head"><div class="t"><div class="c-title">${esc(g.title)}</div>
-      <div class="c-meta"><span class="tag" style="--c:${c}">${icon('target', 11)} Objetivo${g.projectId ? ' · ' + esc(proj(g.projectId).name) : ''}</span>${fmtLong(g.date)}${g.time ? ' · ' + g.time : ''}</div></div>
+      <div class="c-meta"><span class="tag" style="--c:${c}">${icon('target', 11)} Objetivo${g.projectId ? ' · ' + projLabel(g.projectId, g.categoryId) : ''}</span>${fmtLong(g.date)}${g.time ? ' · ' + g.time : ''}</div></div>
       <button class="ibtn" data-act="close-card">${icon('x', 15)}</button></div>
     <div class="goal-check ${g.done ? 'done' : ''}" style="--c:${c}" data-act="toggle-goal" data-id="${id}">
       <span class="check">${icon('check', 15)}</span>
@@ -428,6 +433,7 @@ function formGoal({ id, date }) {
     <div class="row2"><label class="field"><span>Día</span><input class="input" type="date" name="date" required value="${g?.date || date || S.today}"></label>
       <label class="field"><span>Hora</span><input class="input" type="time" name="time" value="${g?.time || ''}"></label></div>
     <label class="field"><span>Proyecto</span><select class="input" name="goalProject">${opts}</select></label>
+    ${catField(g?.projectId, g?.categoryId)}
     <label class="field"><span>Notas</span><textarea class="input" name="notes" rows="2">${esc(g?.notes || '')}</textarea></label>
     ${formFoot(g ? 'Guardar' : 'Crear objetivo')}</form>`;
 }
@@ -458,8 +464,8 @@ function cardDay(d) {
     <div class="c-head"><div class="t"><div class="c-title">${fmtLong(d)}</div><div class="c-meta">${rel(diffDays(S.today, d))}</div></div>
       <button class="ibtn" data-act="close-card">${icon('x', 15)}</button></div>
     <div style="margin-top:10px">
-      ${ms.map((m) => row('ms', m.id, proj(m.projectId).color, m.title, `${KIND_LABEL[m.kind]} · ${S.stats.milestones[m.id].pct}%`)).join('')}
-      ${blocks.map((b) => { const s = S.stats.blocks[b.id]; return row('block', b.id, proj(b.projectId).color, b.title, `${esc(proj(b.projectId).name)}${b.start ? ' · ' + b.start : ''} · ${s.manual ? (b.done ? 'hecho' : 'pendiente') : `${s.done}/${s.total}`}`); }).join('')}
+      ${ms.map((m) => row('ms', m.id, proj(m.projectId).color, m.title, `${KIND_LABEL[m.kind]}${catOf(m.projectId, m.categoryId) ? ' · ' + esc(catOf(m.projectId, m.categoryId).name) : ''} · ${S.stats.milestones[m.id].pct}%`)).join('')}
+      ${blocks.map((b) => { const s = S.stats.blocks[b.id]; return row('block', b.id, proj(b.projectId).color, b.title, `${projLabel(b.projectId, b.categoryId)}${b.start ? ' · ' + b.start : ''} · ${s.manual ? (b.done ? 'hecho' : 'pendiente') : `${s.done}/${s.total}`}`); }).join('')}
       ${goals.map(goalRow).join('')}
       ${rmAll().filter((t) => t.due === d && (!t.done || rmRecent.has(t.id))).map(todoRow).join('')}
       ${exts.map((e) => row('ext', e.id, subColor(e.subId), e.title, `${esc(byId(S.db.subscriptions || [], e.subId)?.name || '')}${e.start ? ' · ' + e.start : ' · todo el día'}`)).join('')}
@@ -490,6 +496,7 @@ function formMilestone({ id, date }) {
   return `<form data-form="ms" data-id="${id || ''}"><div class="c-title">${m ? 'Editar' : 'Nueva fecha importante'}</div>
     <div class="field"><span>Tipo</span>${segField('kind', [['examen', 'Examen'], ['entrega', 'Entrega'], ['hito', 'Hito']], m?.kind || 'examen')}</div>
     ${m ? '' : `<label class="field"><span>Proyecto</span><select class="input" name="projectId">${projectOptions(pid)}</select></label>${newProjectField(!pid)}`}
+    ${catField(pid, m?.categoryId)}
     <label class="field"><span>Título</span><input class="input" name="title" required autofocus value="${esc(m?.title || '')}" placeholder="Parcial 1, Entrega práctica…"></label>
     <div class="row2"><label class="field"><span>Fecha</span><input class="input" type="date" name="date" required value="${m?.date || date || addDays(S.today, 14)}"></label>
       <label class="field"><span>Hora</span><input class="input" type="time" name="time" value="${m?.time || ''}"></label></div>
@@ -518,6 +525,7 @@ function formBlock({ id, date, ms }) {
   return `<form data-form="block" data-id="${id || ''}"><div class="c-title">${b ? 'Editar bloque' : 'Bloque de estudio'}</div>
     ${b ? '' : `<div class="row2"><label class="field"><span>Proyecto</span><select class="input" name="projectId">${projectOptions(pid)}</select></label>
       <label class="field"><span>Para</span><select class="input" name="milestoneId">${pid ? msOptions(pid, mid) : ''}</select></label></div>${newProjectField(!pid)}`}
+    ${catField(pid, b ? b.categoryId : m0?.categoryId)}
     <label class="field"><span>Qué vas a hacer</span><input class="input" name="title" required autofocus value="${esc(b?.title || (m0 ? 'Estudiar · ' + m0.title : ''))}" placeholder="Repasar tema 2…"></label>
     <div class="row2"><label class="field"><span>Desde</span><input class="input" type="date" name="date" required value="${b?.date || date || S.today}"></label>
       <label class="field"><span>Hasta</span><input class="input" type="date" name="endDate" value="${b?.endDate || ''}"></label></div>
@@ -675,11 +683,11 @@ function closeCard(instant) {
 // Lo de un día, en filas (vista de un día a pantalla completa)
 function mItems(d) {
   const out = [];
-  for (const m of S.db.milestones) if (m.date === d && inLayer('ms', m)) out.push({ type: 'ms', id: m.id, color: proj(m.projectId).color, title: m.title, sub: `${KIND_LABEL[m.kind]} · ${esc(proj(m.projectId).name)} · ${S.stats.milestones[m.id].pct}%`, time: m.time || '', icon: KIND_ICON[m.kind] });
-  for (const g of S.db.goals || []) if (g.date === d && inLayer('goal', g)) out.push({ type: 'goal', id: g.id, color: goalColor(g), title: g.title, sub: `Objetivo${g.projectId ? ' · ' + esc(proj(g.projectId).name) : ''}`, time: g.time || '', done: g.done, icon: 'target' });
+  for (const m of S.db.milestones) if (m.date === d && inLayer('ms', m)) out.push({ type: 'ms', id: m.id, color: proj(m.projectId).color, title: m.title, sub: `${KIND_LABEL[m.kind]} · ${projLabel(m.projectId, m.categoryId)} · ${S.stats.milestones[m.id].pct}%`, time: m.time || '', icon: KIND_ICON[m.kind] });
+  for (const g of S.db.goals || []) if (g.date === d && inLayer('goal', g)) out.push({ type: 'goal', id: g.id, color: goalColor(g), title: g.title, sub: `Objetivo${g.projectId ? ' · ' + projLabel(g.projectId, g.categoryId) : ''}`, time: g.time || '', done: g.done, icon: 'target' });
   for (const b of S.db.blocks) if (b.date <= d && blockEnd(b) >= d && inLayer('blk', b)) {
     const st = S.stats.blocks[b.id];
-    out.push({ type: 'block', id: b.id, color: proj(b.projectId).color, title: b.title, sub: `${esc(proj(b.projectId).name)} · ${st.manual ? (b.done ? 'hecho' : 'pendiente') : `${st.done}/${st.total} tareas`}`, time: b.start ? `${b.start}${b.end ? '–' + b.end : ''}` : '', done: st.pct === 100 });
+    out.push({ type: 'block', id: b.id, color: proj(b.projectId).color, title: b.title, sub: `${projLabel(b.projectId, b.categoryId)} · ${st.manual ? (b.done ? 'hecho' : 'pendiente') : `${st.done}/${st.total} tareas`}`, time: b.start ? `${b.start}${b.end ? '–' + b.end : ''}` : '', done: st.pct === 100 });
   }
   for (const t of rmAll()) if (t.due === d && (!t.done || rmRecent.has(t.id))) out.push({ type: 'todo', id: t.id, color: rmColor(t), title: t.title, sub: esc(rmListOf(t.listId).name) + (t.tags?.length ? ' · ' + t.tags.map((g) => '#' + esc(g)).join(' ') : ''), time: t.time || '', done: t.done, icon: t.flagged ? 'flag' : '' });
   for (const e of S.db.extEvents || []) if (e.date <= d && (e.endDate || e.date) >= d && inLayer('ext', e)) out.push({ type: 'ext', id: e.id, color: subColor(e.subId), title: e.title, sub: esc(byId(S.db.subscriptions || [], e.subId)?.name || ''), time: e.start ? `${e.start}${e.end ? '–' + e.end : ''}` : '' });
@@ -1016,7 +1024,7 @@ function rmRow(t, depth, flat = false) {
     rmDue(t),
     flat ? esc(rmListOf(t.listId).name) + (t.parentId ? ' › ' + esc(byId(rmAll(), t.parentId)?.title || '') : '') : '',
     (t.tags || []).map((g) => `<span class="tag">#${esc(g)}</span>`).join(' '),
-    t.projectId ? `<span class="rm-proj" style="--p:${proj(t.projectId).color}">${esc(proj(t.projectId).name)}</span>` : '',
+    t.projectId ? `<span class="rm-proj" style="--p:${proj(t.projectId).color}">${projLabel(t.projectId, t.categoryId)}</span>` : '',
     desc.length && (flat || t.collapsed) ? `${desc.filter((k) => k.done).length}/${desc.length} subapartados` : '',
   ].filter(Boolean).join(' · ');
   return `<div class="rm-row ${t.done ? 'done' : ''} ${ui.rm.detail === t.id ? 'open' : ''}" data-key="td-${t.id}" data-id="${t.id}" data-depth="${depth}" style="--d:${depth};--c:${rmColor(t)}">
@@ -1046,6 +1054,7 @@ function rmDetail(t, depth) {
       <button class="btn ${t.flagged ? 'flag-on' : ''}" data-act="rm-flag" data-id="${t.id}" style="margin-left:auto">${icon('flag', 13)} Bandera</button></div>
     <label class="rm-drow"><span>Lista</span><select class="input" data-rm-field="listId" data-id="${t.id}">${lists.map((l) => opt(l.id, l.name, t.listId || 'inbox')).join('')}</select></label>
     <label class="rm-drow"><span>Proyecto</span><select class="input" data-rm-field="projectId" data-id="${t.id}">${opt('', '—', t.projectId || '')}${S.db.projects.filter((p) => !p.archived).map((p) => opt(p.id, p.name, t.projectId)).join('')}</select></label>
+    ${t.projectId && (byId(S.db.projects, t.projectId)?.categories || []).length ? `<label class="rm-drow"><span>Subcategoría</span><select class="input" data-rm-field="categoryId" data-id="${t.id}">${catOptions(t.projectId, t.categoryId)}</select></label>` : ''}
     <label class="rm-drow"><span>Etiquetas</span><input class="input" data-rm-field="tags" data-id="${t.id}" value="${esc((t.tags || []).join(', '))}" placeholder="casa, urgente (o #etiqueta en el título)"></label>
     <div class="rm-dfoot"><button class="btn" data-act="rm-indent" data-id="${t.id}" data-out="1" title="Quitar sangría (Mayús+Tab)">${icon('outdent', 14)}</button><button class="btn" data-act="rm-indent" data-id="${t.id}" title="Sangrar (Tab)">${icon('indent', 14)}</button>
       <button class="btn danger" data-act="rm-del" data-id="${t.id}">${icon('trash', 13)} Borrar</button><button class="btn primary" data-act="rm-detail" data-id="${t.id}" style="margin-left:auto">Hecho</button></div>
@@ -1530,8 +1539,9 @@ function howOrganize() {
   return `${howHead('Organizar')}
     <div class="how-cols">
       <div>
-        ${sec('sec-projects', 'folder', 'Proyectos', 'Asignaturas, trabajos y proyectos propios. Toca el color para cambiarlo.', `
-          ${S.db.projects.map((p) => `<div class="list-row" data-key="pr-${p.id}" style="cursor:default"><button class="color-btn ${ui.colorFor === p.id ? 'open' : ''}" style="--c:${p.color}" data-act="pick-color" data-id="${p.id}" title="Cambiar color"></button><div class="grow"><div class="ttl">${esc(p.name)}</div><div class="meta">${KIND_LABEL[p.kind] || ''} · ${S.stats.projects[p.id].pct}%</div></div><button class="ibtn" data-act="del-project" data-id="${p.id}" title="Eliminar">${icon('trash', 13)}</button></div>${ui.colorFor === p.id ? paletteRow(p.id, p.color, 'project') : ''}`).join('') || '<div class="hint">Aún no hay proyectos.</div>'}
+        ${sec('sec-projects', 'folder', 'Proyectos', 'Asignaturas, trabajos y proyectos propios, con sus subcategorías (p. ej. seminarios, prácticas, exámenes). Toca el color para cambiarlo.', `
+          ${S.db.projects.map((p) => `<div class="list-row" data-key="pr-${p.id}" style="cursor:default"><button class="color-btn ${ui.colorFor === p.id ? 'open' : ''}" style="--c:${p.color}" data-act="pick-color" data-id="${p.id}" title="Cambiar color"></button><div class="grow"><div class="ttl">${esc(p.name)}</div><div class="meta">${KIND_LABEL[p.kind] || ''} · ${S.stats.projects[p.id].pct}%</div></div><button class="ibtn" data-act="del-project" data-id="${p.id}" title="Eliminar">${icon('trash', 13)}</button></div>${ui.colorFor === p.id ? paletteRow(p.id, p.color, 'project') : ''}
+            <div class="cat-row" data-key="pc-${p.id}" style="--c:${p.color}">${(p.categories || []).map((c) => `<span class="cat-chip" data-key="cc-${c.id}"><input class="cat-name" data-cat-name="${c.id}" data-project="${p.id}" value="${esc(c.name)}" size="${Math.max(3, c.name.length)}" title="Renombrar"><button data-act="del-cat" data-project="${p.id}" data-id="${c.id}" title="Quitar subcategoría">${icon('x', 11)}</button></span>`).join('')}<input class="cat-add" data-add="category" data-project="${p.id}" data-key="catadd-${p.id}" placeholder="+ Subcategoría"></div>`).join('') || '<div class="hint">Aún no hay proyectos.</div>'}
           <input class="inline-add" data-add="project" data-key="addproj" placeholder="Nuevo proyecto  ↵" />`)}
         ${sec('sec-subs', 'cal', 'Calendarios suscritos', 'Calendarios externos (Google, Outlook, iCloud). Sus eventos son de solo lectura y se actualizan solos.', `
           ${(S.db.subscriptions || []).map((s) => `<div class="list-row" data-key="sb-${s.id}" style="cursor:default"><button class="color-btn ${ui.colorFor === s.id ? 'open' : ''}" style="--c:${s.color}" data-act="pick-color" data-id="${s.id}" title="Cambiar color"></button>
@@ -1953,6 +1963,7 @@ const actions = {
   'mcp-copy': () => { if (mcpCache?.url) { api.copy(mcpCache.url); toast(`${icon('check', 14)} Enlace copiado`); } },
   'mcp-revoke': (el) => confirmIn(el, async () => { await api.mcpLinkRevoke(); toast('Enlace desactivado'); loadMcp(); }),
   'mcp-reload': () => loadMcp(),
+  'del-cat': (el) => confirmIn(el, async () => { await run('update_project', { id: el.dataset.project, removeCategoryIds: [el.dataset.id] }); await refresh(); renderHow(true); }),
   'check-account': async () => { const a = await api.checkAccount(); toast(a.ok ? `${icon('check', 14)} Cuenta de Claude conectada` : 'No hay sesión de Claude en este PC'); await refresh(); renderHow(); },
   forget: async (el) => { await api.forget(el.dataset.id); memCache = await api.memories(); renderHow(); },
   'copy-mcp': async () => { api.copy(JSON.stringify(await api.mcpConfig(), null, 2)); toast(`${icon('check', 14)} Configuración MCP copiada`); },
@@ -2039,11 +2050,20 @@ document.addEventListener('change', (e) => {
 // Ajustes en vivo y formularios dependientes
 document.addEventListener('change', async (e) => {
   if (e.target.dataset?.layerName && e.target.value.trim()) return run('update_layer', { id: e.target.dataset.layerName, name: e.target.value.trim() });
+  if (e.target.dataset?.catName && e.target.value.trim()) return run('update_project', { id: e.target.dataset.project, renameCategory: { id: e.target.dataset.catName, name: e.target.value.trim() } });
   const s = e.target.dataset?.setting;
   if (s) { await api.setSettings({ [s]: e.target.checked }); await refresh(); }
   const t = e.target.dataset?.settingText;
   if (t && e.target.value.trim()) await api.setSettings({ [t]: e.target.value.trim() });
   const f = e.target.closest('form[data-form]');
+  if (f && (e.target.name === 'projectId' || e.target.name === 'goalProject')) {
+    const cf = $('[data-catfield]', f);
+    if (cf) { const pid = e.target.value; $('select', cf).innerHTML = catOptions(pid, ''); cf.hidden = !(byId(S.db.projects, pid)?.categories || []).length; }
+  }
+  if (f && e.target.name === 'milestoneId' && e.target.value) {
+    const cid = byId(S.db.milestones, e.target.value)?.categoryId;
+    if (cid && f.categoryId) f.categoryId.value = cid;
+  }
   if (f && e.target.name === 'projectId') {
     const isNew = e.target.value === '__new';
     $('[data-newproj]', f).hidden = !isNew;
@@ -2079,12 +2099,12 @@ document.addEventListener('submit', async (e) => {
     }
     if (f.dataset.form === 'ms') {
       if (f.dataset.id) {
-        await run('update_milestone', { id: f.dataset.id, title: d.title, date: d.date, kind: d.kind, time: d.time });
+        await run('update_milestone', { id: f.dataset.id, title: d.title, date: d.date, kind: d.kind, time: d.time, categoryId: d.categoryId ?? undefined });
         await refresh();
         return swapCard({ type: 'ms', id: f.dataset.id });
       }
       const projectId = await ensureProject();
-      const m = await run('create_milestone', { projectId, title: d.title, date: d.date, kind: d.kind, time: d.time });
+      const m = await run('create_milestone', { projectId, title: d.title, date: d.date, kind: d.kind, time: d.time, categoryId: d.categoryId || undefined });
       for (const t of (d.topics || '').split('\n').map((s) => s.trim()).filter(Boolean)) await run('add_topic', { projectId, milestoneId: m.id, title: t });
       toast(`${icon('check', 14)} ${KIND_LABEL[d.kind]} añadido`);
       await refresh();
@@ -2094,19 +2114,19 @@ document.addEventListener('submit', async (e) => {
       if (f.dataset.id) {
         const was = S.db.tasks.filter((t) => t.blockId === f.dataset.id).map((t) => t.id);
         for (const id of was.filter((x) => !taskIds.includes(x))) await run('update_task', { id, blockId: '' });
-        await run('update_block', { id: f.dataset.id, title: d.title, date: d.date, endDate: d.endDate || '', start: d.start || '', end: d.end || '', taskIds });
+        await run('update_block', { id: f.dataset.id, title: d.title, date: d.date, endDate: d.endDate || '', start: d.start || '', end: d.end || '', taskIds, categoryId: d.categoryId ?? undefined });
         await refresh();
         return swapCard({ type: 'block', id: f.dataset.id });
       }
       const projectId = await ensureProject();
-      const b = await run('create_block', { projectId, milestoneId: d.milestoneId || undefined, title: d.title, date: d.date, endDate: d.endDate || undefined, start: d.start || undefined, end: d.end || undefined, taskIds });
+      const b = await run('create_block', { projectId, milestoneId: d.milestoneId || undefined, categoryId: d.categoryId || undefined, title: d.title, date: d.date, endDate: d.endDate || undefined, start: d.start || undefined, end: d.end || undefined, taskIds });
       toast(`${icon('check', 14)} Bloque creado`);
       await refresh();
       swapCard({ type: 'block', id: b.id });
     }
     if (f.dataset.form === 'goal') {
-      const input = { title: d.title, date: d.date, time: d.time || '', projectId: d.goalProject || '', notes: d.notes || '' };
-      const g = f.dataset.id ? await run('update_goal', { id: f.dataset.id, ...input }) : await run('create_goal', { ...input, time: d.time || undefined, projectId: d.goalProject || undefined });
+      const input = { title: d.title, date: d.date, time: d.time || '', projectId: d.goalProject || '', notes: d.notes || '', categoryId: d.goalProject ? d.categoryId || '' : '' };
+      const g = f.dataset.id ? await run('update_goal', { id: f.dataset.id, ...input }) : await run('create_goal', { ...input, time: d.time || undefined, projectId: d.goalProject || undefined, categoryId: d.goalProject && d.categoryId ? d.categoryId : undefined });
       if (!f.dataset.id) toast(`${icon('target', 14)} Objetivo marcado`);
       await refresh();
       return swapCard({ type: 'goal', id: g.id });
@@ -2122,13 +2142,21 @@ document.addEventListener('submit', async (e) => {
 
 // Añadir en línea (Enter) y teclado
 document.addEventListener('keydown', async (e) => {
-  const inp = e.target.closest?.('.inline-add');
+  if (e.key === 'Enter' && e.target.matches?.('.cat-name')) return e.target.blur();
+  const inp = e.target.closest?.('.inline-add, .cat-add');
   if (inp && e.key === 'Enter' && inp.value.trim()) {
     const v = inp.value.trim();
     inp.value = '';
     const kind = inp.dataset.add;
     if (kind === 'task') await run('add_tasks', { topicId: inp.dataset.topic, titles: v.split(/\s*;\s*/) });
     if (kind === 'topic') await run('add_topic', { projectId: inp.dataset.project, milestoneId: inp.dataset.ms || undefined, title: v });
+    if (kind === 'category') {
+      await run('update_project', { id: inp.dataset.project, addCategories: v.split(/\s*[,;]\s*/) });
+      await refresh();
+      renderHow(true);
+      $(`.how-body [data-key="catadd-${inp.dataset.project}"]`)?.focus();
+      return;
+    }
     if (kind === 'todo-list') {
       const l = await run('create_todo_list', { name: v });
       ui.rm.list = l.id;
