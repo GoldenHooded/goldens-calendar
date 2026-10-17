@@ -649,7 +649,8 @@ function cardBlock(id) {
       ${m ? `<div class="lbl"><a class="lnk" data-act="open" data-type="ms" data-id="${m.id}">${esc(m.title)}</a> · ${rel(diffDays(S.today, m.date)).toLowerCase()}</div>` : ''}</div></div>
     ${(() => { const sums = [...S.db.topics.filter((tp) => (tp.requires || []).some((r) => r.id === id)).map((tp) => tp.title), ...S.db.tasks.filter((t) => (t.requires || []).some((r) => r.id === id)).map((t) => t.title), ...(b.milestoneId && !tasks.length && m ? [m.title] : []), ...(b.categoryId && !tasks.length && catOf(b.projectId, b.categoryId) ? [catOf(b.projectId, b.categoryId).name] : [])]; return sums.length ? `<div class="c-meta sums">${icon('layers', 12)} Suma a: ${sums.map(esc).join(' · ')}</div>` : ''; })()}
     <div class="tasks">${tasks.map((t) => taskRow(t, p.color, byId(S.db.topics, t.topicId)?.title)).join('')}
-      ${!tasks.length && !st.carried ? `<div class="task ${b.done ? 'done' : ''}" style="--c:${p.color}" data-act="toggle-block" data-id="${id}"><span class="check">${icon('check', 12)}</span><span class="tt"><span class="tx">Bloque completado</span></span></div>` : ''}
+      ${!tasks.length && !st.carried && (b.event ?? !!b.blocking) ? `<div class="c-meta" style="margin-top:8px">${icon('cal', 12)} Evento: no hace falta marcarlo como hecho</div>` : ''}
+      ${!tasks.length && !st.carried && !(b.event ?? !!b.blocking) ? `<div class="task ${b.done ? 'done' : ''}" style="--c:${p.color}" data-act="toggle-block" data-id="${id}"><span class="check">${icon('check', 12)}</span><span class="tt"><span class="tx">Bloque completado</span></span></div>` : ''}
       <input class="inline-add" data-key="addb-${id}" data-add="block-task" data-id="${id}" placeholder="Añadir tarea a este bloque  ↵" />
     </div>
     ${past && st.pct < 100 ? `<div class="c-actions"><button class="btn" data-act="rollover">${icon('redo', 13)} Pasar lo pendiente al siguiente bloque</button></div>` : ''}
@@ -816,6 +817,7 @@ function formBlock({ id, date, ms, start }) {
       <label class="field"><span>Hasta</span><input class="input" type="date" name="endDate" value="${b?.endDate || ''}"></label></div>
     <div class="row2"><label class="field"><span>Inicio</span><input class="input" type="time" name="start" value="${b?.start || start || ''}"></label>
       <label class="field"><span>Fin</span><input class="input" type="time" name="end" value="${b?.end || (start ? hhmmOf(Math.min(1439, minsOf(start) + 60)) : '')}"></label></div>
+    <label class="toggle"><div>Es un evento<small>Un viaje, una cita, una clase…: no es una tarea, no se pregunta si lo has terminado ni suma al progreso</small></div><input type="checkbox" name="event" ${b && (b.event ?? !!b.blocking) ? 'checked' : ''}><span class="switch"></span></label>
     <label class="toggle"><div>Tiempo bloqueado<small>Ocupa su hueco en todas las capas: no se podrá poner nada encima</small></div><input type="checkbox" name="blocking" ${b?.blocking ? 'checked' : ''}><span class="switch"></span></label>
     <div class="field"><span>Tareas</span><div class="picklist" data-pick>${pid ? pickTasks(pid, mid, assigned, id) : ''}</div></div>
     ${formFoot(b ? 'Guardar' : 'Crear bloque')}</form>`;
@@ -2669,13 +2671,13 @@ document.addEventListener('submit', async (e) => {
       if (f.dataset.id) {
         const was = S.db.tasks.filter((t) => t.blockId === f.dataset.id).map((t) => t.id);
         for (const id of was.filter((x) => !taskIds.includes(x))) await run('update_task', { id, blockId: '' });
-        await run('update_block', { id: f.dataset.id, title: d.title, date: d.date, endDate: d.endDate || '', start: d.start || '', end: d.end || '', taskIds, categoryId: d.categoryId ?? undefined, blocking: !!d.blocking });
+        await run('update_block', { id: f.dataset.id, title: d.title, date: d.date, endDate: d.endDate || '', start: d.start || '', end: d.end || '', taskIds, categoryId: d.categoryId ?? undefined, blocking: !!d.blocking, event: !!d.event });
         await refresh();
         return swapCard({ type: 'block', id: f.dataset.id });
       }
       const projectId = await ensureProject();
-      const b = await run('create_block', { projectId, milestoneId: d.milestoneId || undefined, categoryId: d.categoryId || undefined, blocking: !!d.blocking || undefined, title: d.title, date: d.date, endDate: d.endDate || undefined, start: d.start || undefined, end: d.end || undefined, taskIds });
-      toast(`${icon('check', 14)} Bloque creado`);
+      const b = await run('create_block', { projectId, milestoneId: d.milestoneId || undefined, categoryId: d.categoryId || undefined, blocking: !!d.blocking || undefined, event: d.event ? true : undefined, title: d.title, date: d.date, endDate: d.endDate || undefined, start: d.start || undefined, end: d.end || undefined, taskIds });
+      toast(b.sumsTo?.length ? `${icon('layers', 14)} Bloque creado · suma a ${b.sumsTo.map(esc).join(', ')}` : `${icon('check', 14)} Bloque creado`, b.sumsTo?.length ? 4500 : 2600);
       await refresh();
       swapCard({ type: 'block', id: b.id });
     }
