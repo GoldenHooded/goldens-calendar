@@ -207,7 +207,6 @@ function render() {
 }
 
 function renderHead() {
-  if (S.web) return renderMobileHead();
   const m = parse(ui.month);
   morph($('#head'), `
     <div class="month"><span class="n" id="mname">${MONTHS[m.getMonth()]}</span><span class="y">${m.getFullYear()}</span></div>
@@ -217,6 +216,7 @@ function renderHead() {
       ${ui.month !== S.today.slice(0, 8) + '01' ? `<button class="ibtn" data-act="today" title="Volver a hoy">${icon('cal', 15)}</button>` : ''}
     </div>
     <button class="layer-pill ${activeLayer() ? 'on' : ''}" data-act="layer-menu" title="Capas">${icon('layers', 13)} ${esc(activeLayer()?.name || 'Todo')}</button>
+    <button class="ibtn rm-go" data-act="rm-go" title="Recordatorios (R)">${icon('checklist', 15)}${rmCount().today ? `<span class="badge">${rmCount().today}</span>` : ''}</button>
     ${ui.layerMenu ? layerMenu() : ''}`);
   $('#weekdays').innerHTML = ['L', 'M', 'X', 'J', 'V', 'S', 'D'].map((d) => `<div>${d}</div>`).join('');
 }
@@ -264,12 +264,12 @@ function weekItems(ws) {
   return items;
 }
 
-function renderCal(dir = 0) {
-  if (S.web) return renderMobile(dir);
+function renderCal(dir = 0, slide = true) {
   const { from } = gridRange();
   const month = parse(ui.month).getMonth();
   const weekH = $('#weeks').clientHeight / 6 || 80;
-  const cap = Math.max(1, Math.floor((weekH - 34) / 21));
+  const G = S.web ? { top: 36, step: 23 } : { top: 33, step: 21 }; // en el móvil, barras algo más grandes
+  const cap = Math.max(1, Math.floor((weekH - G.top - 1) / G.step));
   let html = '';
   let n = 0;
   for (let w = 0; w < 6; w++) {
@@ -281,7 +281,7 @@ function renderCal(dir = 0) {
       if (it.lane >= cap) { for (let c = it.s; c <= it.e; c++) hidden[c]++; continue; }
       const p = it.kind === 'ext' ? { color: subColor(it.x.subId) } : it.x.projectId ? proj(it.x.projectId) : { color: '#d97757' };
       const key = `${it.kind}-${it.id}-${w}`;
-      const style = `left:calc(${(it.s / 7) * 100}% + 3px);width:calc(${((it.e - it.s + 1) / 7) * 100}% - 6px);top:${33 + it.lane * 21}px;--c:${p.color};--ink:${ink(p.color)};--i:${n++}`;
+      const style = `left:calc(${(it.s / 7) * 100}% + 3px);width:calc(${((it.e - it.s + 1) / 7) * 100}% - 6px);top:${G.top + it.lane * G.step}px;--c:${p.color};--ink:${ink(p.color)};--i:${n++}`;
       if (it.kind === 'ext') {
         bars += `<div class="bar ext ${it.cl ? 'cl' : ''} ${it.cr ? 'cr' : ''}" data-act="open" data-type="ext" data-id="${esc(it.id)}" data-key="${esc(key)}" style="${style}" title="${esc(it.x.title)}">${it.x.start && !it.cl ? it.x.start + ' ' : ''}${esc(it.x.title)}</div>`;
       } else if (it.kind === 'goal') {
@@ -309,15 +309,15 @@ function renderCal(dir = 0) {
   const weeks = $('#weeks');
   if (dir) weeks.innerHTML = html; // cambio de mes: entra entero deslizando
   else morph(weeks, html);
-  if (dir || !weeks.dataset.ready) {
+  if ((dir && slide) || !weeks.dataset.ready) {
     // las barras solo entran animadas al abrir o al cambiar de mes, no en cada actualización
     weeks.dataset.ready = '1';
     weeks.classList.add('anim');
     clearTimeout(renderCal.t);
     renderCal.t = setTimeout(() => weeks.classList.remove('anim'), 1200);
   }
-  if (dir) {
-    weeks.classList.remove('l', 'r');
+  weeks.classList.remove('l', 'r');
+  if (dir && slide) {
     void weeks.offsetWidth;
     weeks.classList.add(dir < 0 ? 'l' : 'r');
   }
@@ -447,8 +447,9 @@ function cardDay(d) {
       ${ms.map((m) => row('ms', m.id, proj(m.projectId).color, m.title, `${KIND_LABEL[m.kind]} · ${S.stats.milestones[m.id].pct}%`)).join('')}
       ${blocks.map((b) => { const s = S.stats.blocks[b.id]; return row('block', b.id, proj(b.projectId).color, b.title, `${esc(proj(b.projectId).name)}${b.start ? ' · ' + b.start : ''} · ${s.manual ? (b.done ? 'hecho' : 'pendiente') : `${s.done}/${s.total}`}`); }).join('')}
       ${goals.map(goalRow).join('')}
+      ${rmAll().filter((t) => t.due === d && (!t.done || rmRecent.has(t.id))).map(todoRow).join('')}
       ${exts.map((e) => row('ext', e.id, subColor(e.subId), e.title, `${esc(byId(S.db.subscriptions || [], e.subId)?.name || '')}${e.start ? ' · ' + e.start : ' · todo el día'}`)).join('')}
-      ${!ms.length && !blocks.length && !goals.length && !exts.length ? '<div class="hint">Día libre.</div>' : ''}
+      ${!ms.length && !blocks.length && !goals.length && !exts.length && !rmAll().some((t) => t.due === d && !t.done) ? '<div class="hint">Día libre.</div>' : ''}
     </div>
     ${d <= S.today ? `<div style="margin-top:10px" class="seg">
       <button class="${manual === 'ok' || (!manual && st === 'ok') ? 'on ok' : ''}" data-act="day-status" data-date="${d}" data-s="ok">${icon('check', 13)} Voy al día</button>
@@ -564,7 +565,7 @@ function place(a, w, h) {
 const px = (r) => ({ left: r.left + 'px', top: r.top + 'px', width: r.width + 'px', height: r.height + 'px' });
 
 function openCard(v, anchorEl) {
-  if (S.web) return openSheet(v);
+  if (S.web) return openSheet(v, anchorEl);
   const card = $('#card');
   const a = relRect(anchorEl);
   const html = cardHTML(v);
@@ -656,8 +657,8 @@ function closeCard(instant) {
 }
 
 
-// ================= Móvil: estilo Calendario del iPhone =================
-// Mes compacto con puntos de color, agenda del día elegido debajo, barra inferior y hojas que suben.
+// ================= Móvil =================
+// Lo de un día, en filas (vista de un día a pantalla completa)
 function mItems(d) {
   const out = [];
   for (const m of S.db.milestones) if (m.date === d && inLayer('ms', m)) out.push({ type: 'ms', id: m.id, color: proj(m.projectId).color, title: m.title, sub: `${KIND_LABEL[m.kind]} · ${esc(proj(m.projectId).name)} · ${S.stats.milestones[m.id].pct}%`, time: m.time || '', icon: KIND_ICON[m.kind] });
@@ -666,80 +667,46 @@ function mItems(d) {
     const st = S.stats.blocks[b.id];
     out.push({ type: 'block', id: b.id, color: proj(b.projectId).color, title: b.title, sub: `${esc(proj(b.projectId).name)} · ${st.manual ? (b.done ? 'hecho' : 'pendiente') : `${st.done}/${st.total} tareas`}`, time: b.start ? `${b.start}${b.end ? '–' + b.end : ''}` : '', done: st.pct === 100 });
   }
+  for (const t of rmAll()) if (t.due === d && (!t.done || rmRecent.has(t.id))) out.push({ type: 'todo', id: t.id, color: rmColor(t), title: t.title, sub: esc(rmListOf(t.listId).name) + (t.tags?.length ? ' · ' + t.tags.map((g) => '#' + esc(g)).join(' ') : ''), time: t.time || '', done: t.done, icon: t.flagged ? 'flag' : '' });
   for (const e of S.db.extEvents || []) if (e.date <= d && (e.endDate || e.date) >= d && inLayer('ext', e)) out.push({ type: 'ext', id: e.id, color: subColor(e.subId), title: e.title, sub: esc(byId(S.db.subscriptions || [], e.subId)?.name || ''), time: e.start ? `${e.start}${e.end ? '–' + e.end : ''}` : '' });
-  // Como en iOS: primero lo de todo el día, luego por hora
+  // Primero lo de todo el día, luego por hora
   return out.sort((a, b) => (a.time ? 1 : 0) - (b.time ? 1 : 0) || a.time.localeCompare(b.time));
 }
-function renderMobile(dir = 0) {
-  const { from } = gridRange();
-  const month = parse(ui.month).getMonth();
-  if (!ui.selDate || parse(ui.selDate).getMonth() !== month) ui.selDate = S.today.slice(0, 8) + '01' === ui.month ? S.today : ui.month;
-  let html = '';
-  for (let w = 0; w < 6; w++) {
-    let row = '';
-    for (let c = 0; c < 7; c++) {
-      const d = addDays(from, w * 7 + c);
-      const items = mItems(d);
-      const dots = items.slice(0, 3).map((it) => `<i style="--c:${it.color}"></i>`).join('');
-      row += `<button class="mday ${parse(d).getMonth() !== month ? 'out' : ''} ${d === S.today ? 'today' : ''} ${d === ui.selDate ? 'sel' : ''}" data-act="msel" data-date="${d}" data-key="md-${d}" data-drop="${d}">
-        <span class="mnum">${parse(d).getDate()}</span><span class="mdots">${dots}</span></button>`;
-    }
-    html += `<div class="mweek">${row}</div>`;
-  }
-  const weeks = $('#weeks');
-  weeks.classList.add('mgrid');
-  if (dir) weeks.innerHTML = html;
-  else morph(weeks, html, false);
-  if (dir) {
-    weeks.classList.remove('l', 'r');
-    void weeks.offsetWidth;
-    weeks.classList.add(dir < 0 ? 'l' : 'r');
-  }
-  renderAgenda();
-  renderMBar();
-}
-function renderAgenda() {
-  let el = $('#agenda');
-  if (!el) {
-    el = document.createElement('div');
-    el.id = 'agenda';
-    $('#widget').appendChild(el);
-  }
-  const d = ui.selDate;
+
+// --- Un día a pantalla completa ---
+function dayFull(d) {
   const items = mItems(d);
-  const n = diffDays(S.today, d);
-  morph(el, `
-    <div class="ag-h" data-key="agh"><span>${fmtLong(d)}</span><span class="ag-rel">${n === 0 ? 'Hoy' : rel(n)}</span></div>
-    ${items.map((it) => `<div class="arow ${it.done ? 'done' : ''}" style="--c:${it.color}" data-act="open" data-type="${it.type}" data-id="${esc(it.id)}" data-key="ag-${esc(it.id)}">
-      <span class="abar"></span>
-      <div class="agrow"><div class="at">${it.icon ? icon(it.icon, 13) : ''}<span>${esc(it.title)}</span></div><div class="as">${it.sub}</div></div>
-      <div class="atime">${it.time || 'todo el día'}</div>
-      ${it.type === 'goal' ? `<button class="acheck ${it.done ? 'on' : ''}" data-act="toggle-goal" data-id="${it.id}" aria-label="Conseguido">${icon('check', 14)}</button>` : ''}
-    </div>`).join('') || `<div class="ag-empty" data-key="agempty">Nada este día.<br><button class="lnk" data-act="m-new">Añadir algo</button></div>`}`);
-}
-function renderMBar() {
-  let el = $('#mbar');
-  if (!el) {
-    el = document.createElement('nav');
-    el.id = 'mbar';
-    $('#widget').appendChild(el);
-  }
-  morph(el, `<button data-act="today">Hoy</button><button data-act="layer-menu" data-key="mb-layer">${icon('layers', 16)}<span>${esc(activeLayer()?.name || 'Capas')}</span></button><button data-act="how-open">¿Cómo vas?</button>`);
-}
-function renderMobileHead() {
-  const m = parse(ui.month);
-  morph($('#head'), `
-    <div class="mh-top"><button class="mh-year" data-act="today">${icon('chevL', 18)}<span>${m.getFullYear()}</span></button><div class="spacer"></div>
-      <button class="mh-btn" data-act="how-view" data-v="organize" title="Organizar">${icon('folder', 20)}</button>
-      <button class="mh-btn" data-act="m-new" title="Añadir">${icon('plus', 22)}</button></div>
-    <div class="mh-title"><span class="n" id="mname">${MONTHS[m.getMonth()]}</span>
-      <span class="mh-nav"><button class="mh-btn" data-act="month" data-d="-1">${icon('chevL', 18)}</button><button class="mh-btn" data-act="month" data-d="1">${icon('chevR', 18)}</button></span></div>
-    ${ui.layerMenu ? layerMenu() : ''}`);
-  $('#weekdays').innerHTML = ['L', 'M', 'X', 'J', 'V', 'S', 'D'].map((d) => `<div>${d}</div>`).join('');
+  const dt = parse(d);
+  const manual = S.db.days[d]?.status || '';
+  const st = S.days[d];
+  const check = (it) => (it.type === 'goal' || it.type === 'todo' ? `<button class="acheck ${it.done ? 'on' : ''}" data-act="${it.type === 'todo' ? 'rm-toggle' : 'toggle-goal'}" data-id="${it.id}" aria-label="Hecho">${icon('check', 15)}</button>` : '');
+  return `
+    <div class="df-head" data-key="dfh">
+      <div class="df-date"><span class="df-num ${d === S.today ? 'today' : ''}">${dt.getDate()}</span>
+        <div><div class="df-wd">${cap1(dt.toLocaleDateString('es-ES', { weekday: 'long' }))}</div><div class="df-mo">${MONTHS[dt.getMonth()]} ${dt.getFullYear()} · ${rel(diffDays(S.today, d))}</div></div></div>
+      <button class="ibtn" data-act="close-card" title="Cerrar">${icon('x', 20)}</button>
+    </div>
+    <div class="df-list" data-key="dfl">
+      ${items.map((it) => `<div class="arow ${it.done ? 'done' : ''}" style="--c:${it.color}" data-act="${it.type === 'todo' ? 'rm-goto' : 'swap'}" data-type="${it.type}" data-id="${esc(it.id)}" data-key="df-${esc(it.id)}">
+        <span class="abar"></span>
+        <div class="agrow"><div class="at">${it.icon ? icon(it.icon, 15) : ''}<span>${esc(it.title)}</span></div><div class="as">${it.sub}</div></div>
+        <div class="atime">${it.time || 'todo el día'}</div>${check(it)}</div>`).join('') || '<div class="df-empty">Día libre 🌿</div>'}
+    </div>
+    ${d <= S.today ? `<div class="seg df-st" data-key="dfst">
+      <button class="${manual === 'ok' || (!manual && st === 'ok') ? 'on ok' : ''}" data-act="day-status" data-date="${d}" data-s="ok">${icon('check', 15)} Voy al día</button>
+      <button class="${manual === 'late' || (!manual && st === 'late') ? 'on late' : ''}" data-act="day-status" data-date="${d}" data-s="late">${icon('clock', 15)} Voy atrasado</button></div>` : ''}
+    <div class="df-add" data-key="dfadd">
+      <button data-act="swap" data-type="new-block" data-date="${d}">${icon('layers', 20)}<span>Bloque</span></button>
+      <button data-act="swap" data-type="new-goal" data-date="${d}">${icon('target', 20)}<span>Objetivo</span></button>
+      <button data-act="swap" data-type="new-ms" data-date="${d}">${icon('cap', 20)}<span>Examen</span></button>
+      <button data-act="day-todo" data-date="${d}">${icon('checklist', 20)}<span>Recordatorio</span></button>
+    </div>
+    <div class="df-hint">Desliza a los lados para cambiar de día · hacia abajo para cerrar</div>`;
 }
 
-// --- Hojas que suben desde abajo (sustituyen a las tarjetas flotantes en el móvil) ---
-function sheetDim(on) {
+// --- Hojas (en el móvil sustituyen a las tarjetas flotantes). Un día ocupa la pantalla entera. ---
+const EASE_OUT = 'cubic-bezier(0.2, 0.9, 0.25, 1)';
+function sheetDim(on, o) {
   let dim = $('#sheet-dim');
   if (!dim) {
     dim = document.createElement('div');
@@ -748,63 +715,718 @@ function sheetDim(on) {
     $('#widget').appendChild(dim);
   }
   dim.classList.toggle('on', on);
+  dim.style.opacity = o ?? '';
 }
-function openSheet(v) {
+const sheetInner = (v) => (v.type === 'day' ? dayFull(v.date) : cardHTML(v));
+const cellRect = (d) => $(`.cell[data-date="${d}"]`)?.getBoundingClientRect();
+const clipFrom = (r) => `inset(${r.top}px ${innerWidth - r.right}px ${innerHeight - r.bottom}px ${r.left}px round 16px)`;
+function openSheet(v, anchorEl) {
   const card = $('#card');
-  const html = cardHTML(v);
+  const html = sheetInner(v);
   if (!html) return;
   ui.card = { ...v, anchor: null };
   card.removeAttribute('style');
-  card.innerHTML = `<div class="grabber"></div><div class="card-in">${html}</div>`;
-  card.classList.add('show', 'sheet');
+  card.className = 'card show sheet' + (v.type === 'day' ? ' full' : '');
+  card.innerHTML = `<div class="sheet-top"><button class="ibtn sheet-back" data-act="card-back">${icon('chevL', 22)}</button><div class="grabber"></div></div><div class="card-in">${html}</div>`;
   sheetDim(true);
-  card.animate([{ transform: 'translateY(100%)' }, { transform: 'none' }], { duration: 420, easing: 'cubic-bezier(0.2, 0.9, 0.25, 1)' });
+  const r = anchorEl?.getBoundingClientRect?.();
+  if (v.type === 'day' && r?.width) {
+    // El día crece desde su casilla hasta ocupar la pantalla
+    card.animate([{ clipPath: clipFrom(r), opacity: 0.5 }, { clipPath: 'inset(0 0 0 0 round 0px)', opacity: 1 }], { duration: 460, easing: EASE_OUT });
+    $('.card-in', card).animate([{ opacity: 0, transform: `translateY(${Math.max(-60, r.top - 120)}px) scale(0.96)` }, { opacity: 1, transform: 'none' }], { duration: 420, easing: EASE_OUT });
+  } else card.animate([{ transform: 'translateY(100%)' }, { transform: 'none' }], { duration: 420, easing: EASE_OUT });
   afterCard();
 }
-function swapSheet(v) {
+function swapSheet(v, dir = 0) {
   const card = $('#card');
-  const html = cardHTML(v);
+  const html = sheetInner(v);
   if (!html) return closeCard();
-  ui.card = { ...v, anchor: null };
+  ui.card = { ...v, anchor: null, root: ui.card?.root || (card.classList.contains('full') ? 'day' : null) };
   const h0 = card.offsetHeight;
-  card.innerHTML = `<div class="grabber"></div><div class="card-in fade">${html}</div>`;
+  $('.card-in', card).outerHTML = `<div class="card-in">${html}</div>`;
+  const inner = $('.card-in', card);
+  inner.animate(dir ? [{ opacity: 0, transform: `translateX(${dir * 40}px)` }, { opacity: 1, transform: 'none' }] : [{ opacity: 0, transform: 'translateY(8px)' }, { opacity: 1, transform: 'none' }], { duration: 320, easing: EASE_OUT });
   const h1 = card.offsetHeight;
-  if (Math.abs(h1 - h0) > 2) card.animate([{ height: h0 + 'px' }, { height: h1 + 'px' }], { duration: 320, easing: 'cubic-bezier(0.2, 0.9, 0.25, 1)' });
+  if (!card.classList.contains('full') && Math.abs(h1 - h0) > 2) card.animate([{ height: h0 + 'px' }, { height: h1 + 'px' }], { duration: 320, easing: EASE_OUT });
   afterCard();
 }
-function closeSheet(instant) {
+function closeSheet(instant, fromY = 0) {
   const card = $('#card');
+  const v = ui.card;
   ui.card = null;
   sheetDim(false);
+  card.classList.remove('has-back');
   if (instant) return card.classList.remove('show');
-  card.animate([{ transform: 'none' }, { transform: 'translateY(105%)' }], { duration: 260, easing: 'cubic-bezier(0.4, 0, 1, 1)', fill: 'forwards' }).onfinish = (a) => {
+  const r = v?.type === 'day' && !fromY ? cellRect(v.date) : null;
+  const anim = r
+    ? card.animate([{ clipPath: 'inset(0 0 0 0 round 0px)', opacity: 1 }, { clipPath: clipFrom(r), opacity: 0 }], { duration: 300, easing: 'cubic-bezier(0.4, 0, 0.2, 1)', fill: 'forwards' })
+    : card.animate([{ transform: `translateY(${fromY}px)` }, { transform: 'translateY(105%)' }], { duration: Math.max(140, 260 - fromY * 0.4), easing: 'cubic-bezier(0.3, 0, 0.8, 0.6)', fill: 'forwards' });
+  anim.onfinish = () => {
     if (!ui.card) card.classList.remove('show');
-    a.target?.cancel?.();
+    anim.cancel();
   };
 }
-// Arrastrar la hoja hacia abajo la cierra
+// Cambiar de día dentro de la vista de día (botones o deslizando)
+function stepDay(n, fromX = 0) {
+  if (ui.card?.type !== 'day') return;
+  const date = addDays(ui.card.date, n);
+  const inner = $('#card .card-in');
+  const w = innerWidth;
+  const out = inner.animate([{ transform: `translate3d(${fromX}px,0,0)`, opacity: 1 - Math.abs(fromX) / w }, { transform: `translate3d(${-n * w * 0.6}px,0,0)`, opacity: 0 }], { duration: 170, easing: 'cubic-bezier(0.3, 0, 0.8, 0.6)', fill: 'forwards' });
+  out.onfinish = () => {
+    ui.card = { ...ui.card, date };
+    inner.innerHTML = dayFull(date);
+    out.cancel();
+    inner.animate([{ transform: `translate3d(${n * w * 0.45}px,0,0)`, opacity: 0 }, { transform: 'none', opacity: 1 }], { duration: 360, easing: EASE_OUT });
+    inner.scrollTop = 0;
+  };
+}
+
+// --- Gestos que siguen al dedo ---
+// Velocidad (px/ms) de las últimas posiciones
+function tracker(x, y) {
+  const pts = [[x, y, performance.now()]];
+  return {
+    add(x, y) { pts.push([x, y, performance.now()]); if (pts.length > 6) pts.shift(); },
+    v() { const a = pts[0], b = pts[pts.length - 1]; const dt = Math.max(1, b[2] - a[2]); return [(b[0] - a[0]) / dt, (b[1] - a[1]) / dt]; },
+  };
+}
+// Hojas: hacia abajo se cierran (siguiendo al dedo); en la vista de día, a los lados cambian de día
 (() => {
-  let y0 = null, dy = 0;
+  let g = null;
   document.addEventListener('touchstart', (e) => {
-    const card = e.target.closest('#card.sheet');
-    if (!card) return;
+    const card = e.target.closest('#card.sheet.show');
+    if (!card || e.touches.length > 1 || e.target.closest('input, textarea, select')) return;
+    const t = e.touches[0];
     const inner = $('.card-in', card);
-    if (e.target.closest('.grabber') || (inner && inner.scrollTop <= 0)) (y0 = e.touches[0].clientY), (dy = 0);
+    g = { card, inner, x: t.clientX, y: t.clientY, top: e.target.closest('.sheet-top') || (inner?.scrollTop || 0) <= 0, axis: null, tr: tracker(t.clientX, t.clientY), dx: 0, dy: 0 };
   }, { passive: true });
   document.addEventListener('touchmove', (e) => {
-    if (y0 === null) return;
-    dy = Math.max(0, e.touches[0].clientY - y0);
-    $('#card').style.transform = `translateY(${dy}px)`;
-  }, { passive: true });
-  document.addEventListener('touchend', () => {
-    if (y0 === null) return;
-    const card = $('#card');
-    y0 = null;
-    if (dy > 110) closeSheet();
-    card.animate([{ transform: card.style.transform }, { transform: 'none' }], { duration: 250, easing: OUT });
-    card.style.transform = '';
-  }, { passive: true });
+    if (!g) return;
+    const t = e.touches[0];
+    const dx = t.clientX - g.x, dy = t.clientY - g.y;
+    g.tr.add(t.clientX, t.clientY);
+    if (!g.axis) {
+      if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+      if (Math.abs(dy) > Math.abs(dx) && dy > 0 && g.top) g.axis = 'y';
+      else if (Math.abs(dx) > Math.abs(dy) * 1.2 && ui.card?.type === 'day') g.axis = 'x';
+      else return (g = null);
+      clearTimeout(press);
+    }
+    e.preventDefault();
+    g.dx = dx;
+    g.dy = Math.max(0, dy);
+    if (g.axis === 'y') {
+      g.card.style.transform = `translate3d(0,${g.dy}px,0)`;
+      sheetDim(true, Math.max(0, 1 - g.dy / (g.card.offsetHeight || innerHeight)));
+    } else {
+      g.inner.style.transform = `translate3d(${dx}px,0,0)`;
+      g.inner.style.opacity = 1 - Math.min(0.7, Math.abs(dx) / innerWidth);
+    }
+  }, { passive: false });
+  const end = () => {
+    const s = g;
+    g = null;
+    if (!s?.axis) return;
+    ui.suppressClick = true;
+    setTimeout(() => (ui.suppressClick = false), 80);
+    const [vx, vy] = s.tr.v();
+    if (s.axis === 'y') {
+      s.card.style.transform = '';
+      if (s.dy > 120 || vy > 0.6) return closeSheet(false, s.dy);
+      sheetDim(true);
+      s.card.animate([{ transform: `translate3d(0,${s.dy}px,0)` }, { transform: 'none' }], { duration: 380, easing: SPRING });
+    } else {
+      s.inner.style.transform = '';
+      s.inner.style.opacity = '';
+      if (Math.abs(s.dx) > innerWidth * 0.25 || Math.abs(vx) > 0.5) return stepDay(s.dx < 0 ? 1 : -1, s.dx);
+      s.inner.animate([{ transform: `translate3d(${s.dx}px,0,0)` }, { transform: 'none' }], { duration: 380, easing: SPRING });
+    }
+  };
+  document.addEventListener('touchend', end, { passive: true });
+  document.addEventListener('touchcancel', end, { passive: true });
 })();
+
+// El mes sigue al dedo: suéltalo con fuerza (o pasada la cuarta parte) y entra el siguiente
+let mswipe = null;
+function monthSwipeInit() {
+  const cal = $('#cal');
+  const weeks = $('#weeks');
+  cal.addEventListener('touchstart', (e) => {
+    if (!S?.web || ui.card || ui.how === 'open' || e.touches.length > 1) return;
+    const t = e.touches[0];
+    mswipe = { x: t.clientX, y: t.clientY, on: false, dx: 0, w: cal.clientWidth, tr: tracker(t.clientX, t.clientY) };
+  }, { passive: true });
+  cal.addEventListener('touchmove', (e) => {
+    if (!mswipe) return;
+    if (pdrag) return (mswipe = null); // arrastrando una barra
+    const t = e.touches[0];
+    const dx = t.clientX - mswipe.x, dy = t.clientY - mswipe.y;
+    mswipe.tr.add(t.clientX, t.clientY);
+    if (!mswipe.on) {
+      if (Math.abs(dx) < 8 || Math.abs(dx) < Math.abs(dy)) { if (Math.abs(dy) > 14) mswipe = null; return; }
+      mswipe.on = true;
+      clearTimeout(press);
+      clearTimeout(holdT);
+    }
+    e.preventDefault();
+    mswipe.dx = dx;
+    // Resistencia suave al principio y libre después
+    weeks.style.transform = `translate3d(${dx}px,0,0)`;
+    weeks.style.opacity = 1 - Math.min(0.55, (Math.abs(dx) / mswipe.w) * 0.7);
+    $('#mname').style.transform = `translateX(${dx * 0.12}px)`;
+  }, { passive: false });
+  const end = async () => {
+    const s = mswipe;
+    mswipe = null;
+    if (!s?.on) return;
+    ui.suppressClick = true;
+    setTimeout(() => (ui.suppressClick = false), 80);
+    const [vx] = s.tr.v();
+    const op = +weeks.style.opacity || 1;
+    weeks.style.transform = weeks.style.opacity = '';
+    $('#mname').style.transform = '';
+    if (Math.abs(s.dx) < s.w * 0.22 && Math.abs(vx) < 0.45) {
+      weeks.animate([{ transform: `translate3d(${s.dx}px,0,0)`, opacity: op }, { transform: 'none', opacity: 1 }], { duration: 420, easing: SPRING });
+      return;
+    }
+    const dir = s.dx < 0 ? 1 : -1;
+    const m = parse(ui.month);
+    m.setMonth(m.getMonth() + dir);
+    const month = iso(m);
+    const next = api.state((() => { const keep = ui.month; ui.month = month; const r = gridRange(); ui.month = keep; return r; })());
+    const out = weeks.animate([{ transform: `translate3d(${s.dx}px,0,0)`, opacity: op }, { transform: `translate3d(${-dir * s.w}px,0,0)`, opacity: 0 }], { duration: Math.max(110, 220 - Math.abs(vx) * 60), easing: 'cubic-bezier(0.3, 0, 0.8, 0.6)', fill: 'forwards' });
+    const [st] = await Promise.all([next, out.finished]);
+    ui.month = month;
+    S = st;
+    renderHead();
+    renderCal(dir, false);
+    out.cancel();
+    weeks.animate([{ transform: `translate3d(${dir * s.w * 0.45}px,0,0)`, opacity: 0 }, { transform: 'none', opacity: 1 }], { duration: 420, easing: EASE_OUT });
+    $('#mname').animate([{ transform: `translateX(${dir * 14}px)`, opacity: 0 }, { transform: 'none', opacity: 1 }], { duration: 380, easing: EASE_OUT });
+  };
+  cal.addEventListener('touchend', end, { passive: true });
+  cal.addEventListener('touchcancel', end, { passive: true });
+}
+
+// Paneles a pantalla completa: desde el borde izquierdo se vuelve atrás; hacia abajo (arriba del todo) se cierran
+(() => {
+  let g = null;
+  document.addEventListener('touchstart', (e) => {
+    const how = e.target.closest('#how.open');
+    if (!how || !S?.web || e.touches.length > 1) return;
+    const t = e.touches[0];
+    const body = $('.how-body', how);
+    g = { how, x: t.clientX, y: t.clientY, edge: t.clientX < 30, top: body.scrollTop <= 0 && !e.target.closest('.rm-row, input, textarea, select'), axis: null, tr: tracker(t.clientX, t.clientY), dx: 0, dy: 0 };
+  }, { passive: true });
+  document.addEventListener('touchmove', (e) => {
+    if (!g) return;
+    const t = e.touches[0];
+    const dx = t.clientX - g.x, dy = t.clientY - g.y;
+    g.tr.add(t.clientX, t.clientY);
+    if (!g.axis) {
+      if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+      if (g.edge && dx > 0 && Math.abs(dx) > Math.abs(dy)) g.axis = 'x';
+      else if (g.top && dy > 0 && Math.abs(dy) > Math.abs(dx) * 1.2) g.axis = 'y';
+      else return (g = null);
+    }
+    e.preventDefault();
+    g.dx = Math.max(0, dx);
+    g.dy = Math.max(0, dy);
+    g.how.style.transition = 'none';
+    g.how.style.transform = g.axis === 'x' ? `translate3d(${g.dx}px,0,0)` : `translate3d(0,${g.dy}px,0)`;
+    g.how.style.borderRadius = Math.min(24, (g.axis === 'x' ? g.dx : g.dy) / 6) + 'px';
+  }, { passive: false });
+  const end = () => {
+    const s = g;
+    g = null;
+    if (!s?.axis) return;
+    ui.suppressClick = true;
+    setTimeout(() => (ui.suppressClick = false), 80);
+    const [vx, vy] = s.tr.v();
+    const from = s.how.style.transform;
+    s.how.style.transform = s.how.style.borderRadius = s.how.style.transition = '';
+    const d = s.axis === 'x' ? s.dx : s.dy;
+    const go = s.axis === 'x' ? d > innerWidth * 0.3 || vx > 0.5 : d > 130 || vy > 0.6;
+    if (!go) return s.how.animate([{ transform: from }, { transform: 'none' }], { duration: 380, easing: SPRING });
+    const to = s.axis === 'x' ? `translate3d(${innerWidth}px,0,0)` : `translate3d(0,${innerHeight}px,0)`;
+    const back = s.axis === 'x' && (ui.howView !== 'summary' || ui.rm.list);
+    const a = s.how.animate([{ transform: from }, { transform: to }], { duration: 220, easing: 'cubic-bezier(0.3, 0, 0.8, 0.6)', fill: 'forwards' });
+    a.onfinish = () => {
+      if (back) {
+        if (ui.howView === 'todo' && ui.rm.list) actions['rm-open']({ dataset: { l: '' } });
+        else openHow('summary');
+        a.cancel();
+        s.how.animate([{ transform: 'translate3d(-30%,0,0)', opacity: 0.4 }, { transform: 'none', opacity: 1 }], { duration: 360, easing: EASE_OUT });
+      } else {
+        s.how.classList.add('no-anim');
+        closeHow();
+        a.cancel();
+        requestAnimationFrame(() => s.how.classList.remove('no-anim'));
+      }
+    };
+  };
+  document.addEventListener('touchend', end, { passive: true });
+  document.addEventListener('touchcancel', end, { passive: true });
+})();
+
+// ================= Recordatorios: el //TODO general, estilo iPhone, con sangría sin límite =================
+const RM_SMART = {
+  today: { name: 'Hoy', color: '#0a84ff', icon: 'cal' },
+  scheduled: { name: 'Programados', color: '#ff453a', icon: 'clock' },
+  all: { name: 'Todos', color: '#8e8e93', icon: 'tray' },
+  flagged: { name: 'Con bandera', color: '#ff9f0a', icon: 'flag' },
+  done: { name: 'Completados', color: '#8e8e93', icon: 'check' },
+};
+const INBOX = { id: 'inbox', name: 'Recordatorios', color: '#d97757' };
+ui.rm = { list: null, showDone: false, detail: null, draft: null, q: '', lock: false };
+const rmRecent = new Set(); // recién marcados: se quedan un momento antes de esconderse
+const rmAll = () => S.db.todos || [];
+const rmKids = (pid, listId) => rmAll().filter((t) => (t.parentId || null) === (pid || null) && (pid ? true : (t.listId || null) === (listId || null))).sort((a, b) => a.order - b.order);
+const rmDesc = (id) => rmAll().filter((t) => t.parentId === id).flatMap((t) => [t, ...rmDesc(t.id)]);
+const rmListOf = (id) => (!id || id === 'inbox' ? INBOX : byId(S.db.todoLists || [], id) || INBOX);
+const rmColor = (t) => rmListOf(t.listId).color;
+const rmCount = () => S.todo || { today: 0, scheduled: 0, all: 0, flagged: 0, done: 0, lists: {}, tags: {} };
+const rmCurList = () => (ui.rm.list && !RM_SMART[ui.rm.list] && !ui.rm.list.startsWith('tag:') ? ui.rm.list : null);
+
+function rmDue(t) {
+  if (!t.due) return '';
+  const n = diffDays(S.today, t.due);
+  const day = n === 0 ? 'Hoy' : n === 1 ? 'Mañana' : n === -1 ? 'Ayer' : n > 1 && n < 7 ? cap1(parse(t.due).toLocaleDateString('es-ES', { weekday: 'long' })) : fmtShort(t.due);
+  return `<span class="${n < 0 && !t.done ? 'late' : ''}">${day}${t.time ? ', ' + t.time : ''}</span>`;
+}
+function rmRow(t, depth, flat = false) {
+  const kids = rmAll().some((k) => k.parentId === t.id);
+  const desc = kids ? rmDesc(t.id) : [];
+  const meta = [
+    rmDue(t),
+    flat ? esc(rmListOf(t.listId).name) + (t.parentId ? ' › ' + esc(byId(rmAll(), t.parentId)?.title || '') : '') : '',
+    (t.tags || []).map((g) => `<span class="tag">#${esc(g)}</span>`).join(' '),
+    t.projectId ? `<span class="rm-proj" style="--p:${proj(t.projectId).color}">${esc(proj(t.projectId).name)}</span>` : '',
+    desc.length && (flat || t.collapsed) ? `${desc.filter((k) => k.done).length}/${desc.length} subapartados` : '',
+  ].filter(Boolean).join(' · ');
+  return `<div class="rm-row ${t.done ? 'done' : ''} ${ui.rm.detail === t.id ? 'open' : ''}" data-key="td-${t.id}" data-id="${t.id}" data-depth="${depth}" style="--d:${depth};--c:${rmColor(t)}">
+    ${kids && !flat ? `<button class="rm-fold ${t.collapsed ? '' : 'on'}" data-act="rm-fold" data-id="${t.id}" title="${t.collapsed ? 'Desplegar' : 'Plegar'}">${icon('chevR', 13)}</button>` : '<span class="rm-fold"></span>'}
+    <button class="rm-check" data-act="rm-check" data-id="${t.id}" aria-label="Hecho"><i></i></button>
+    <div class="rm-main">
+      <div class="rm-line">${t.priority ? `<span class="rm-pri">${'!'.repeat(t.priority)}</span>` : ''}<textarea class="rm-t" data-id="${t.id}" rows="1" spellcheck="false" enterkeyhint="next">${esc(t.title)}</textarea></div>
+      ${t.notes ? `<div class="rm-notes">${esc(t.notes)}</div>` : ''}
+      ${meta ? `<div class="rm-meta">${meta}</div>` : ''}
+    </div>
+    ${t.flagged ? `<span class="rm-flag">${icon('flag', 14)}</span>` : ''}
+    <button class="rm-info" data-act="rm-detail" data-id="${t.id}" title="Detalles">${icon('info', 18)}</button>
+    <button class="rm-swdel" data-act="rm-del" data-id="${t.id}">Borrar</button>
+  </div>${ui.rm.detail === t.id ? rmDetail(t, depth) : ''}`;
+}
+const rmDraftRow = (depth, color) => `<div class="rm-row draft" data-key="td-draft" style="--d:${depth};--c:${color}"><span class="rm-fold"></span><span class="rm-check"><i></i></span>
+  <div class="rm-main"><div class="rm-line"><textarea class="rm-t" data-draft="1" rows="1" spellcheck="false" enterkeyhint="next"></textarea></div></div></div>`;
+
+function rmDetail(t, depth) {
+  const lists = [INBOX, ...(S.db.todoLists || [])];
+  const opt = (v, l, sel) => `<option value="${v}" ${v === sel ? 'selected' : ''}>${esc(l)}</option>`;
+  return `<div class="rm-detail" data-key="tdd-${t.id}" style="--d:${depth}">
+    <textarea class="input rm-notes-in" data-rm-field="notes" data-id="${t.id}" rows="2" placeholder="Notas">${esc(t.notes || '')}</textarea>
+    <div class="rm-drow">${icon('cal', 15)}<input type="date" class="input" data-rm-field="due" data-id="${t.id}" value="${t.due || ''}"><input type="time" class="input" data-rm-field="time" data-id="${t.id}" value="${t.time || ''}" style="flex:0 0 96px"></div>
+    <div class="rm-quick">${[['0', 'Hoy'], ['1', 'Mañana'], ['7', 'En una semana'], ['', 'Sin fecha']].map(([v, l]) => `<button data-act="rm-due" data-id="${t.id}" data-v="${v}">${l}</button>`).join('')}</div>
+    <div class="rm-drow"><span>Prioridad</span><div class="seg">${['Ninguna', '!', '!!', '!!!'].map((l, i) => `<button type="button" class="${(t.priority || 0) === i ? 'on' : ''}" data-act="rm-pri" data-id="${t.id}" data-v="${i}">${l}</button>`).join('')}</div>
+      <button class="btn ${t.flagged ? 'flag-on' : ''}" data-act="rm-flag" data-id="${t.id}" style="margin-left:auto">${icon('flag', 13)} Bandera</button></div>
+    <label class="rm-drow"><span>Lista</span><select class="input" data-rm-field="listId" data-id="${t.id}">${lists.map((l) => opt(l.id, l.name, t.listId || 'inbox')).join('')}</select></label>
+    <label class="rm-drow"><span>Proyecto</span><select class="input" data-rm-field="projectId" data-id="${t.id}">${opt('', '—', t.projectId || '')}${S.db.projects.filter((p) => !p.archived).map((p) => opt(p.id, p.name, t.projectId)).join('')}</select></label>
+    <label class="rm-drow"><span>Etiquetas</span><input class="input" data-rm-field="tags" data-id="${t.id}" value="${esc((t.tags || []).join(', '))}" placeholder="casa, urgente (o #etiqueta en el título)"></label>
+    <div class="rm-dfoot"><button class="btn" data-act="rm-indent" data-id="${t.id}" data-out="1" title="Quitar sangría (Mayús+Tab)">${icon('outdent', 14)}</button><button class="btn" data-act="rm-indent" data-id="${t.id}" title="Sangrar (Tab)">${icon('indent', 14)}</button>
+      <button class="btn danger" data-act="rm-del" data-id="${t.id}">${icon('trash', 13)} Borrar</button><button class="btn primary" data-act="rm-detail" data-id="${t.id}" style="margin-left:auto">Hecho</button></div>
+  </div>`;
+}
+
+// Árbol de una lista, aplanado en filas con su profundidad (con el borrador donde toque)
+function rmFlat(listId, withDraft = true) {
+  const out = [];
+  const d = withDraft ? ui.rm.draft : null;
+  const vis = (t) => ui.rm.showDone || !t.done || rmRecent.has(t.id);
+  const walk = (pid, depth) => {
+    if (d && (d.parentId || null) === (pid || null) && d.afterId === null) out.push({ draft: true, depth });
+    for (const t of rmKids(pid, listId)) {
+      if (vis(t)) {
+        out.push({ t, depth });
+        if (!t.collapsed) walk(t.id, depth + 1);
+      }
+      if (d && d.afterId === t.id) out.push({ draft: true, depth });
+    }
+    if (d && (d.parentId || null) === (pid || null) && d.afterId === 'end') out.push({ draft: true, depth });
+  };
+  walk(null, 0);
+  return out;
+}
+function rmSmartItems(view) {
+  const open = rmAll().filter((t) => !t.done || rmRecent.has(t.id));
+  const q = ui.rm.q.trim().toLowerCase();
+  if (q) return rmAll().filter((t) => (ui.rm.showDone || !t.done) && [t.title, t.notes, ...(t.tags || [])].join(' ').toLowerCase().includes(q));
+  if (view === 'done') return rmAll().filter((t) => t.done).sort((a, b) => (b.doneAt || '').localeCompare(a.doneAt || ''));
+  const f = view === 'today' ? (t) => t.due && t.due <= S.today : view === 'scheduled' ? (t) => t.due : view === 'flagged' ? (t) => t.flagged : view.startsWith('tag:') ? (t) => (t.tags || []).includes(view.slice(4)) : () => true;
+  return open.filter(f).sort((a, b) => (a.due || '9999').localeCompare(b.due || '9999') || (a.time || '99').localeCompare(b.time || '99') || a.order - b.order);
+}
+
+function rmHome() {
+  const c = rmCount();
+  const lists = [INBOX, ...(S.db.todoLists || []).slice().sort((a, b) => (a.order ?? 0) - (b.order ?? 0))];
+  const tags = Object.keys(c.tags || {}).sort();
+  const projs = S.db.projects.filter((p) => rmAll().some((t) => t.projectId === p.id && !t.done));
+  return `
+    <div class="rm-top" data-key="rmtop"><button class="rm-back" data-act="how-view" data-v="summary">${icon('chevL', 18)}<span>¿Cómo vas?</span></button><button class="ibtn" data-act="how-close" title="Cerrar">${icon('x', 16)}</button></div>
+    <div class="rm-big" data-key="rmbig">Recordatorios</div>
+    <label class="rm-search" data-key="rmsearch">${icon('search', 15)}<input data-rm-search placeholder="Buscar" value="${esc(ui.rm.q)}" enterkeyhint="search"></label>
+    ${ui.rm.q.trim() ? `<div class="rm-rows" data-key="rmres">${rmSmartItems('all').map((t) => rmRow(t, 0, true)).join('') || '<div class="hint" style="padding:10px 4px">Nada coincide.</div>'}</div>` : `
+    <div class="rm-tiles" data-key="rmtiles">${Object.entries(RM_SMART).map(([k, v]) => `<button class="rm-tile ${k === 'done' ? 'wide' : ''}" data-act="rm-open" data-l="${k}" style="--c:${v.color}"><span class="rm-ic">${icon(v.icon, 16)}</span>${k === 'done' ? '' : `<b>${c[k] || 0}</b>`}<span class="l">${v.name}</span></button>`).join('')}</div>
+    <div class="rm-h" data-key="rmh-lists">Mis listas</div>
+    <div class="rm-group" data-key="rmlists">${lists.map((l) => `<button class="rm-lrow" data-act="rm-open" data-l="${l.id}" data-key="rml-${l.id}" style="--c:${l.color}"><span class="rm-ic">${icon('list', 15)}</span><span class="grow">${esc(l.name)}</span><span class="n">${(c.lists || {})[l.id] || 0}</span>${icon('chevR', 15)}</button>`).join('')}
+      <input class="inline-add rm-addlist" data-add="todo-list" data-key="addtdl" placeholder="Añadir lista  ↵"></div>
+    ${projs.length ? `<div class="rm-h" data-key="rmh-proj">Por proyecto</div><div class="rm-group" data-key="rmprojs">${projs.map((p) => `<button class="rm-lrow" data-act="rm-open" data-l="proj:${p.id}" data-key="rmp-${p.id}" style="--c:${p.color}"><span class="rm-ic">${icon('folder', 14)}</span><span class="grow">${esc(p.name)}</span><span class="n">${rmAll().filter((t) => t.projectId === p.id && !t.done).length}</span>${icon('chevR', 15)}</button>`).join('')}</div>` : ''}
+    ${tags.length ? `<div class="rm-h" data-key="rmh-tags">Etiquetas</div><div class="rm-tags" data-key="rmtags">${tags.map((g) => `<button class="rm-tag" data-act="rm-open" data-l="tag:${esc(g)}">#${esc(g)}</button>`).join('')}</div>` : ''}`}`;
+}
+
+function rmListView() {
+  const id = ui.rm.list;
+  const smart = RM_SMART[id];
+  const isTag = id.startsWith('tag:');
+  const isProj = id.startsWith('proj:');
+  const list = smart ? { name: smart.name, color: smart.color } : isTag ? { name: '#' + id.slice(4), color: '#8e8e93' } : isProj ? { name: proj(id.slice(5)).name, color: proj(id.slice(5)).color } : rmListOf(id);
+  const real = !smart && !isTag && !isProj;
+  let rows = '';
+  let count = 0;
+  if (real) {
+    const flat = rmFlat(id === 'inbox' ? null : id);
+    count = rmAll().filter((t) => (t.listId || 'inbox') === id && !t.done).length;
+    rows = flat.map((r) => (r.draft ? rmDraftRow(r.depth, list.color) : rmRow(r.t, r.depth))).join('');
+  } else if (id === 'all') {
+    const lists = [INBOX, ...(S.db.todoLists || [])];
+    count = rmCount().all;
+    rows = lists.map((l) => {
+      const flat = rmFlat(l.id === 'inbox' ? null : l.id, false);
+      return flat.length ? `<div class="rm-group-h" data-key="rgh-${l.id}" style="--c:${l.color}">${esc(l.name)}</div>${flat.map((r) => rmRow(r.t, r.depth)).join('')}` : '';
+    }).join('');
+    if (ui.rm.draft) rows += rmDraftRow(0, INBOX.color);
+  } else {
+    const items = isProj ? rmAll().filter((t) => t.projectId === id.slice(5) && (!t.done || rmRecent.has(t.id) || ui.rm.showDone)) : rmSmartItems(id);
+    count = items.filter((t) => !t.done).length;
+    if (id === 'scheduled' || id === 'today') {
+      let last = null;
+      for (const t of items) {
+        const g = id === 'today' ? (t.due < S.today ? 'Atrasados' : 'Hoy') : t.due < S.today ? 'Atrasados' : rel(diffDays(S.today, t.due)) === 'Mañana' || t.due === S.today ? rel(diffDays(S.today, t.due)) : fmtLong(t.due);
+        if (g !== last) rows += `<div class="rm-group-h ${g === 'Atrasados' ? 'late' : ''}" data-key="rgh-${esc(g)}">${g}</div>`;
+        last = g;
+        rows += rmRow(t, 0, true);
+      }
+    } else rows = items.map((t) => rmRow(t, 0, true)).join('');
+    if (ui.rm.draft) rows += rmDraftRow(0, list.color);
+  }
+  const doneN = real ? rmAll().filter((t) => (t.listId || 'inbox') === id && t.done).length : 0;
+  return `
+    <div class="rm-top" data-key="rmtop"><button class="rm-back" data-act="rm-open" data-l="">${icon('chevL', 18)}<span>Listas</span></button>
+      <div style="display:flex;gap:2px">${real && id !== 'inbox' ? `<button class="ibtn" data-act="rm-list-menu" data-id="${id}" title="Lista">${icon('more', 16)}</button>` : ''}<button class="ibtn" data-act="how-close" title="Cerrar">${icon('x', 16)}</button></div></div>
+    <div class="rm-title" data-key="rmtitle" style="--c:${list.color}">${real && id !== 'inbox' ? `<input class="rm-title-in" data-rm-listname="${id}" value="${esc(list.name)}">` : `<span>${esc(list.name)}</span>`}<span class="n">${count || ''}</span></div>
+    ${real && ui.colorFor === id ? paletteRow(id, list.color, 'todoList') : ''}
+    ${real && doneN ? `<div class="rm-sub" data-key="rmsub"><span>${doneN} completado${doneN > 1 ? 's' : ''}</span><button class="lnk" data-act="rm-showdone">${ui.rm.showDone ? 'Ocultar' : 'Mostrar'}</button></div>` : ''}
+    <div class="rm-rows" data-key="rmrows" style="--c:${list.color}">${rows || (id === 'done' ? '<div class="hint" style="padding:14px 4px">Aún no has completado nada.</div>' : '')}</div>
+    ${id === 'done' ? '' : `<button class="rm-new" data-act="rm-new" data-key="rmnew" style="--c:${list.color}"><span class="pl">${icon('plus', 14)}</span>Nuevo recordatorio</button>`}
+    ${!rows && id !== 'done' && !ui.rm.draft ? `<div class="rm-empty" data-key="rmempty">${real ? 'Sin recordatorios. Pulsa «Nuevo recordatorio» y ve escribiendo: Intro crea otro, Tab lo mete dentro del de arriba.' : 'Nada por aquí.'}</div>` : ''}`;
+}
+function howTodo() {
+  return `<div class="rm">${ui.rm.list ? rmListView() : rmHome()}</div>`;
+}
+// Fila del resumen / tarjeta del día (sin editar)
+const todoRow = (t) => `
+  <div class="task ${t.done ? 'done' : ''}" style="--c:${rmColor(t)}" data-act="rm-toggle" data-id="${t.id}">
+    <span class="check" style="border-radius:50%">${icon('check', 12)}</span>
+    <span class="tt"><span class="tx">${esc(t.title)}</span><span class="from">${esc(rmListOf(t.listId).name)}${t.due && t.due !== S.today ? ' · ' + rel(diffDays(S.today, t.due)).toLowerCase() : ''}${t.time ? ' · ' + t.time : ''}</span></span>
+  </div>`;
+
+// --- edición en línea ---
+function rmFit(root = document) {
+  if (CSS.supports?.('field-sizing', 'content')) return;
+  $$('.rm-t', root).forEach((el) => { el.style.height = 'auto'; el.style.height = el.scrollHeight + 'px'; });
+}
+function rmFocus(el, atEnd = true) {
+  if (!el) return;
+  el.focus({ preventScroll: false });
+  const n = atEnd ? el.value.length : 0;
+  el.setSelectionRange?.(n, n);
+  el.scrollIntoView({ block: 'nearest' });
+}
+function rmRender(focus) {
+  ui.rm.lock = true;
+  renderHow(true);
+  if (focus) rmFocus(typeof focus === 'string' ? $(focus) : focus);
+  ui.rm.lock = false;
+}
+async function rmReload(focus) {
+  S = await api.state(gridRange());
+  render();
+  rmRender(focus);
+}
+const draftListId = () => { const l = rmCurList(); return l && l !== 'inbox' ? l : null; };
+function draftPreset() {
+  const l = ui.rm.list;
+  if (l === 'today' || l === 'scheduled') return { due: S.today };
+  if (l === 'flagged') return { flagged: true };
+  if (l?.startsWith('tag:')) return { tags: [l.slice(4)] };
+  if (l?.startsWith('proj:')) return { projectId: l.slice(5) };
+  return {};
+}
+// Guarda lo escrito en una fila (o crea el recordatorio si era el borrador). Devuelve el id creado.
+async function rmCommit(el) {
+  const v = el.value.replace(/\s*\n\s*/g, ' ').trim();
+  if (el.dataset.draft) {
+    const d = ui.rm.draft;
+    if (!v || !d) return null;
+    el.value = '';
+    const out = await run('add_todos', { listId: d.listId ?? draftListId(), parentId: d.parentId || undefined, afterId: d.afterId === 'end' ? undefined : d.afterId, items: [{ title: v, ...draftPreset(), ...(d.preset || {}) }] });
+    const id = out.created[0]?.id;
+    if (ui.rm.draft === d && id) ui.rm.draft = { ...d, afterId: id };
+    return id;
+  }
+  const t = byId(rmAll(), el.dataset.id);
+  if (!t) return null;
+  if (!v) {
+    if (!rmAll().some((k) => k.parentId === t.id)) await run('delete_item', { type: 'todo', id: t.id });
+    else el.value = t.title;
+    return null;
+  }
+  if (v !== t.title) await run('update_todo', { id: t.id, title: v });
+  return null;
+}
+const rowOf = (el) => el.closest('.rm-row');
+const prevSibId = (t) => { const s = rmKids(t.parentId, t.listId); return s[s.findIndex((x) => x.id === t.id) - 1]?.id; };
+async function rmIndent(el, out) {
+  if (el.dataset.draft) {
+    const d = ui.rm.draft;
+    if (!d) return;
+    if (out) {
+      if (!d.parentId) return;
+      const p = byId(rmAll(), d.parentId);
+      ui.rm.draft = { ...d, parentId: p?.parentId || null, afterId: d.parentId };
+    } else {
+      const sibs = rmKids(d.parentId, d.listId ?? draftListId());
+      const above = d.afterId === 'end' ? sibs[sibs.length - 1]?.id : d.afterId;
+      if (!above) return;
+      ui.rm.draft = { ...d, parentId: above, afterId: 'end' };
+      const a = byId(rmAll(), above);
+      if (a?.collapsed) await run('update_todo', { id: above, collapsed: false });
+    }
+    navigator.vibrate?.(8);
+    return rmReload(el);
+  }
+  const t = byId(rmAll(), el.dataset.id);
+  if (!t) return;
+  await rmCommit(el);
+  try {
+    await run('indent_todo', { id: t.id, outdent: !!out });
+    navigator.vibrate?.(8);
+  } catch {}
+  await rmReload(`.rm-t[data-id="${t.id}"]`);
+}
+// El borrador se pone justo debajo de la fila (o al final de la lista)
+function rmStartDraft(afterRow) {
+  const t = afterRow && byId(rmAll(), afterRow.dataset.id);
+  const listId = t ? t.listId || null : draftListId();
+  ui.rm.draft = t ? { parentId: t.parentId || null, afterId: t.id, listId } : { parentId: null, afterId: 'end', listId };
+  rmRender('[data-key="td-draft"] .rm-t');
+}
+
+document.addEventListener('keydown', async (e) => {
+  const el = e.target;
+  if (!el.matches?.('.rm-t')) {
+    if (e.target.matches?.('[data-rm-search]') && e.key === 'Escape') { el.value = ''; ui.rm.q = ''; renderHow(true); }
+    return;
+  }
+  const row = rowOf(el);
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    if (el.dataset.draft) {
+      if (!el.value.trim()) return el.blur(); // Intro en una línea vacía: terminar
+      await rmCommit(el);
+      return rmReload(el);
+    }
+    const commit = rmCommit(el);
+    rmStartDraft(row); // sin esperar: el teclado del móvil no se cierra
+    await commit;
+    return rmReload();
+  }
+  if (e.key === 'Tab') {
+    e.preventDefault();
+    return rmIndent(el, e.shiftKey);
+  }
+  if (e.key === 'Escape') {
+    e.stopPropagation();
+    return el.blur();
+  }
+  if (e.key === 'Backspace' && !el.value && el.selectionStart === 0) {
+    e.preventDefault();
+    const rows = $$('.how-body .rm-t');
+    const prev = rows[rows.indexOf(el) - 1];
+    if (el.dataset.draft) {
+      ui.rm.draft = null;
+      return rmRender(prev);
+    }
+    const t = byId(rmAll(), el.dataset.id);
+    if (t && !rmAll().some((k) => k.parentId === t.id)) {
+      ui.rm.lock = true;
+      rmFocus(prev);
+      ui.rm.lock = false;
+      await run('delete_item', { type: 'todo', id: t.id });
+      return rmReload();
+    }
+  }
+  if ((e.key === 'ArrowUp' && el.selectionStart === 0) || (e.key === 'ArrowDown' && el.selectionEnd === el.value.length)) {
+    const rows = $$('.how-body .rm-t');
+    const next = rows[rows.indexOf(el) + (e.key === 'ArrowUp' ? -1 : 1)];
+    if (next) { e.preventDefault(); rmFocus(next, e.key === 'ArrowDown' ? false : true); }
+  }
+}, true);
+document.addEventListener('input', (e) => {
+  if (e.target.matches?.('.rm-t')) rmFit(e.target.parentNode);
+  if (e.target.matches?.('[data-rm-search]')) {
+    ui.rm.q = e.target.value;
+    renderHow(true);
+  }
+});
+document.addEventListener('focusin', (e) => {
+  if (e.target.matches?.('.rm-t')) $('#how').classList.add('rm-editing');
+});
+document.addEventListener('focusout', (e) => {
+  const el = e.target;
+  if (!el.matches?.('.rm-t') || ui.rm.lock) return;
+  setTimeout(async () => {
+    if (document.activeElement === el || ui.rm.lock) return;
+    if (!document.activeElement?.matches?.('.rm-t')) $('#how').classList.remove('rm-editing');
+    const wasDraft = !!el.dataset.draft;
+    await rmCommit(el);
+    if (wasDraft) ui.rm.draft = null;
+    if (!document.activeElement?.matches?.('.rm-t')) rmReload();
+  }, 0);
+});
+// Campos del detalle
+document.addEventListener('change', async (e) => {
+  const f = e.target.dataset?.rmField;
+  if (e.target.dataset?.rmListname && e.target.value.trim()) return run('update_todo_list', { id: e.target.dataset.rmListname, name: e.target.value.trim() });
+  if (!f) return;
+  const id = e.target.dataset.id;
+  let v = e.target.value;
+  if (f === 'tags') v = v.split(/[\s,]+/).map((x) => x.replace(/^#/, '')).filter(Boolean);
+  await run('update_todo', { id, [f]: v });
+  rmReload();
+});
+
+// Barra sobre el teclado / al pie del panel mientras escribes
+function rmBar() {
+  let bar = $('.rm-bar');
+  if (bar) return bar;
+  bar = document.createElement('div');
+  bar.className = 'rm-bar';
+  bar.innerHTML = `<button data-rmb="out" title="Quitar sangría (Mayús+Tab)">${icon('outdent', 18)}</button><button data-rmb="in" title="Sangrar (Tab)">${icon('indent', 18)}</button>
+    <button data-rmb="today" title="Para hoy">${icon('cal', 17)}</button><button data-rmb="flag" title="Bandera">${icon('flag', 17)}</button><button data-rmb="info" title="Detalles">${icon('info', 18)}</button><span class="sp"></span><button data-rmb="ok">OK</button>`;
+  bar.addEventListener('pointerdown', (e) => e.preventDefault()); // no quitar el foco (ni cerrar el teclado)
+  bar.addEventListener('click', async (e) => {
+    const b = e.target.closest('[data-rmb]');
+    const el = document.activeElement;
+    if (!b || !el?.matches?.('.rm-t')) return;
+    const k = b.dataset.rmb;
+    if (k === 'ok') return el.blur();
+    if (k === 'in' || k === 'out') return rmIndent(el, k === 'out');
+    let id = el.dataset.id;
+    if (el.dataset.draft) id = await rmCommit(el);
+    if (!id) return;
+    const t = byId(rmAll(), id) || {};
+    if (k === 'today') await run('update_todo', { id, due: t.due === S.today ? '' : S.today });
+    if (k === 'flag') await run('update_todo', { id, flagged: !t.flagged });
+    if (k === 'info') { ui.rm.detail = id; el.blur(); }
+    rmReload(k === 'info' ? null : el.dataset.draft ? el : `.rm-t[data-id="${id}"]`);
+  });
+  $('#how').appendChild(bar);
+  return bar;
+}
+if (window.visualViewport) {
+  const vv = window.visualViewport;
+  const kb = () => document.documentElement.style.setProperty('--kb', Math.max(0, innerHeight - vv.height - vv.offsetTop) + 'px');
+  vv.addEventListener('resize', kb);
+  vv.addEventListener('scroll', kb);
+}
+
+// Deslizar una fila: derecha = sangrar, izquierda = quitar sangría (o mostrar «Borrar» si ya está arriba del todo)
+let rsw = null;
+document.addEventListener('touchstart', (e) => {
+  const row = e.target.closest('.rm-row:not(.draft)');
+  $$('.rm-row.swiped').forEach((r) => r !== row && r.classList.remove('swiped'));
+  if (!row || e.target.closest('.rm-detail, .rm-swdel')) return;
+  rsw = { row, x: e.touches[0].clientX, y: e.touches[0].clientY, dx: 0, on: false };
+}, { passive: true });
+document.addEventListener('touchmove', (e) => {
+  if (!rsw) return;
+  const dx = e.touches[0].clientX - rsw.x, dy = e.touches[0].clientY - rsw.y;
+  if (!rsw.on) {
+    if (Math.abs(dy) > 12 && Math.abs(dy) > Math.abs(dx)) return (rsw = null);
+    if (Math.abs(dx) < 12) return;
+    rsw.on = true;
+    clearTimeout(press);
+  }
+  rsw.dx = dx;
+  const lim = Math.max(-120, Math.min(120, dx * 0.7));
+  rsw.row.style.transition = 'none';
+  rsw.row.style.transform = `translateX(${lim}px)`;
+  const arm = dx > 70 ? 'in' : dx < -70 ? 'out' : '';
+  if (arm !== (rsw.row.dataset.arm || '')) { rsw.row.dataset.arm = arm; if (arm) navigator.vibrate?.(6); }
+}, { passive: true });
+document.addEventListener('touchend', async () => {
+  const s = rsw;
+  rsw = null;
+  if (!s?.on) return;
+  ui.suppressClick = true;
+  setTimeout(() => (ui.suppressClick = false), 60);
+  const { row, dx } = s;
+  row.style.transition = '';
+  row.style.transform = '';
+  delete row.dataset.arm;
+  const t = byId(rmAll(), row.dataset.id);
+  if (!t) return;
+  if (dx > 70 && !row.closest('.rm-flatlist')) {
+    try { await run('indent_todo', { id: t.id }); } catch {}
+    return rmReload();
+  }
+  if (dx < -70) {
+    if (t.parentId && !row.closest('.rm-flatlist')) {
+      await run('indent_todo', { id: t.id, outdent: true });
+      return rmReload();
+    }
+    row.classList.add('swiped');
+  }
+}, { passive: true });
+
+async function rmToggle(el, id) {
+  const t = byId(rmAll(), id);
+  if (!t) return;
+  const done = !t.done;
+  if (el.classList.contains('task')) popCheck(el, done);
+  else {
+    const row = el.closest('.rm-row') || el;
+    row.classList.toggle('done', done);
+    row.classList.remove('pop');
+    void row.offsetWidth;
+    row.classList.add('pop');
+    if (done) { const r = el.getBoundingClientRect(); burst(r.left + r.width / 2, r.top + r.height / 2, rmColor(t)); }
+  }
+  ui.holdUntil = Date.now() + 600;
+  if (done) {
+    rmRecent.add(id);
+    rmDesc(id).forEach((k) => rmRecent.add(k.id));
+    setTimeout(() => {
+      [id, ...rmDesc(id).map((k) => k.id)].forEach((k) => rmRecent.delete(k));
+      if (ui.rm.showDone) return;
+      const rows = [id, ...rmDesc(id).map((k) => k.id)].map((k) => $(`.rm-row[data-id="${k}"]`)).filter(Boolean);
+      rows.forEach((r) => r.classList.add('rm-out'));
+      setTimeout(() => rmReload(), rows.length ? 320 : 0);
+    }, 1400);
+  }
+  await run('update_todo', { id, done });
+}
 
 // ---------- "¿Cómo vas?" ----------
 function greeting() {
@@ -820,7 +1442,7 @@ function howSummary() {
   const verdict = late ? `Llevas ${late} tarea${late > 1 ? 's' : ''} atrasada${late > 1 ? 's' : ''}` : all.total && all.done === all.total ? 'Hoy ya está hecho' : 'Vas al día';
   return `
     <div class="how-top"><div><div class="greet">${greeting()}</div><div class="sub">${fmtLong(S.today)}</div></div>
-      <div style="display:flex;gap:2px"><button class="ibtn" data-act="how-view" data-v="organize" title="Organizar: proyectos, capas y calendarios">${icon('folder', 16)}</button><button class="ibtn" data-act="how-view" data-v="settings" title="Ajustes">${icon('gear', 16)}</button><button class="ibtn" data-act="how-close" title="Cerrar">${icon('x', 16)}</button></div></div>
+      <div style="display:flex;gap:2px"><button class="ibtn" data-act="rm-go" title="Recordatorios">${icon('checklist', 16)}</button><button class="ibtn" data-act="how-view" data-v="organize" title="Organizar: proyectos, capas y calendarios">${icon('folder', 16)}</button><button class="ibtn" data-act="how-view" data-v="settings" title="Ajustes">${icon('gear', 16)}</button><button class="ibtn" data-act="how-close" title="Cerrar">${icon('x', 16)}</button></div></div>
     ${text ? `<div class="ai-line">${icon('spark', 15)}<span>${esc(text)}</span></div>` : aiLoading ? `<div class="ai-line loading">${icon('spark', 15)}<span>Pensando en tu día…</span></div>` : ''}
     ${b.moved.length ? `<div class="sub" style="margin-top:12px">↻ ${b.moved.length} tarea${b.moved.length > 1 ? 's' : ''} de días anteriores ${b.moved.length > 1 ? 'pasaron' : 'pasó'} a tus próximos bloques.</div>` : ''}
     <div class="how-cols">
@@ -829,7 +1451,8 @@ function howSummary() {
           <div><b>${verdict}</b><div class="sub">${all.total ? `${all.done} de ${all.total} tareas de hoy` : 'Nada programado hoy'}${late ? ` · <a class="lnk" data-act="rollover">pasarlas al siguiente bloque</a>` : ''}</div></div></div>
         <div class="h3">Hoy</div>
         ${b.goals.filter((g) => g.date <= S.today).map((g) => goalRow(byId(S.db.goals, g.id))).join('')}
-        ${b.blocks.flatMap((bl) => bl.tasks.map((t) => taskRow(t, bl.color, bl.title))).join('') || (b.goals.some((g) => g.date <= S.today) ? '' : '<div class="hint">Día libre 🌿</div>')}
+        ${(b.todos || []).map((x) => byId(rmAll(), x.id)).filter(Boolean).map(todoRow).join('')}
+        ${b.blocks.flatMap((bl) => bl.tasks.map((t) => taskRow(t, bl.color, bl.title))).join('') || (b.goals.some((g) => g.date <= S.today) || (b.todos || []).length ? '' : '<div class="hint">Día libre 🌿</div>')}
       </div>
       <div>
         ${b.goals.some((g) => g.date > S.today) ? `<div class="h3" style="margin-top:4px">Objetivos de la semana</div>${b.goals.filter((g) => g.date > S.today).map((g) => goalRow(byId(S.db.goals, g.id))).join('')}` : ''}
@@ -873,6 +1496,7 @@ function howSettings() {
       </div>
       <div>
         ${sec('sec-cloud', 'layers', 'Nube y móvil', 'Tu calendario sincronizado entre este PC, el móvil y otros ordenadores.', cloudSection())}
+        ${sec('sec-remote', 'spark', 'Claude desde cualquier sitio', 'Tu calendario y tus recordatorios dentro de Claude: en la web, en el móvil o en otro ordenador.', mcpSection())}
         ${sec('sec-agent', 'spark', 'Agente', 'Usa tu cuenta de Claude. Recuerda lo importante de lo que haces y le pides.', `
           <div class="list-row" style="cursor:default;padding-left:0"><span class="dotc" style="--c:${S.account.ok ? 'var(--ok)' : 'var(--late)'};border-radius:50%"></span>
             <div class="grow"><div class="ttl">${S.account.ok ? 'Cuenta de Claude conectada' : 'Sin sesión de Claude'}</div>
@@ -915,6 +1539,29 @@ function howOrganize() {
           <input class="inline-add" data-add="layer" data-key="addlayer" placeholder="Nueva capa (p. ej. «Universidad»)  ↵" />`)}
       </div>
     </div>`;
+}
+
+
+// ---------- Claude desde cualquier sitio (MCP remoto) ----------
+let mcpCache;
+function mcpSection() {
+  const c = S.cloud || {};
+  if (!c.email) return '<div class="hint">Entra primero en «Nube y móvil»: el enlace va unido a tu cuenta.</div>';
+  if (mcpCache === undefined) return '<div class="hint">Cargando…</div>';
+  if (mcpCache?.error) return `<div class="cloud-msg err">${esc(mcpCache.error)}</div><div class="c-actions"><button class="btn" data-act="mcp-reload">${icon('redo', 13)} Reintentar</button></div>`;
+  const when = (t) => new Date(t).toLocaleString('es-ES', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+  const steps = `<ol class="mcp-steps"><li>Copia el enlace.</li><li>En Claude (claude.ai): <b>Ajustes → Conectores → Añadir conector personalizado</b>. Ponle de nombre «Golden&#39;s Calendar» y pega el enlace.</li><li>Ya está también en Claude del móvil. Pídele cosas como «¿qué tengo hoy?» o «apúntame la compra para el sábado».</li></ol>`;
+  if (!mcpCache) return `<div class="sec-d" style="margin:0 0 10px">Crea un enlace secreto y añádelo en Claude como conector: podrá ver y organizar tu calendario y tus recordatorios desde la web o el móvil, aunque este dispositivo esté apagado.</div>
+    <button class="btn primary" data-act="mcp-create">${icon('spark', 13)} Crear enlace</button>`;
+  return `${mcpCache.url ? `<div class="mcp-url" data-key="mcp-url"><code>${esc(mcpCache.url.replace(/^https:\/\//, '').replace(/(\/mcp\/.{6}).+/, '$1…'))}</code><button class="btn primary" data-act="mcp-copy">${icon('copy', 13)} Copiar</button></div>${steps}`
+    : `<div class="sec-d" style="margin:0 0 8px">Tienes un enlace activo creado en otro dispositivo. Cópialo desde allí o crea uno nuevo aquí (el anterior dejará de funcionar).</div>`}
+    <div class="c-meta" style="margin-top:8px">Creado ${when(mcpCache.created_at)}${mcpCache.last_used ? ` · último uso ${when(mcpCache.last_used)}` : ' · aún sin usar'}</div>
+    <div class="c-actions"><button class="btn" data-act="mcp-create">${icon('redo', 13)} ${mcpCache.url ? 'Cambiar enlace' : 'Crear uno nuevo'}</button><button class="btn danger" data-act="mcp-revoke">Desactivar</button></div>
+    <div class="sec-d" style="margin-top:8px">Quien tenga el enlace puede usar tu calendario: no lo compartas. Si se filtra, cámbialo.</div>`;
+}
+async function loadMcp() {
+  try { mcpCache = await api.mcpLink(); } catch (e) { mcpCache = { error: cleanErr(e) }; }
+  renderHow(true);
 }
 
 // ---------- Nube y móvil ----------
@@ -966,20 +1613,22 @@ function sizeHow() {
 function renderHow(force = true) {
   const el = $('#how');
   sizeHow();
-  el.className = `how ${ui.how} ${ui.fresh && ui.how !== 'open' ? 'fresh' : ''}`;
+  el.className = `how ${ui.how} ${ui.fresh && ui.how !== 'open' ? 'fresh' : ''} ${document.activeElement?.matches?.('.how .rm-t') ? 'rm-editing' : ''}`;
   if (!el.firstChild) el.innerHTML = `<div class="how-btn"></div><div class="how-body"></div>`;
   $('.how-btn', el).innerHTML = `${ui.fresh ? '<span class="dot"></span>' : icon('sun', 14)} ¿Cómo vas?`;
-  if (ui.how !== 'open' || (!force && document.activeElement?.closest?.('.how-body input'))) return;
+  if (ui.how !== 'open' || (!force && document.activeElement?.closest?.('.how-body input, .how-body textarea, .how-body select'))) return;
   const body = $('.how-body', el);
   const scroll = body.scrollTop;
   const view = ui.howView;
   if (body.dataset.view !== view) (body.innerHTML = ''), (body.dataset.view = view); // otra pantalla: entra completa
-  morph(body, view === 'settings' ? howSettings() : view === 'organize' ? howOrganize() : howSummary());
+  morph(body, view === 'settings' ? howSettings() : view === 'organize' ? howOrganize() : view === 'todo' ? howTodo() : howSummary());
   body.scrollTop = scroll;
   animateValues(body);
+  if (view === 'todo') (rmBar(), rmFit(body));
 }
 function openHow(view = 'summary') {
   closeCard(true);
+  if (view === 'todo' && ui.howView !== 'todo') (ui.rm.draft = null), (ui.rm.detail = null);
   ui.how = 'open';
   ui.howView = view;
   if (ui.fresh) { ui.fresh = false; api.briefingSeen(); }
@@ -989,7 +1638,7 @@ function openHow(view = 'summary') {
     renderHow();
     api.briefingAI().finally(() => { aiLoading = false; refresh(); });
   }
-  if (view === 'settings') api.memories().then((m) => { memCache = m; renderHow(); });
+  if (view === 'settings') { api.memories().then((m) => { memCache = m; renderHow(); }); if (S.cloud?.email) loadMcp(); }
 }
 function closeHow() { ui.how = 'idle'; renderHow(); }
 
@@ -1023,7 +1672,7 @@ const TOOL_LABEL = {
   daily_briefing: 'Día revisado', create_project: 'Proyecto creado', update_project: 'Proyecto actualizado',
   create_milestone: 'Fecha añadida', update_milestone: 'Fecha actualizada', add_topic: 'Tema añadido', update_topic: 'Tema actualizado', add_tasks: 'Subapartados añadidos',
   update_task: 'Tarea actualizada', create_block: 'Bloque creado', update_block: 'Bloque actualizado', plan_study: 'Estudio planificado', rollover_pending: 'Pendientes movidos',
-  set_day_status: 'Día marcado', delete_item: 'Eliminado', create_goal: 'Objetivo marcado', update_goal: 'Objetivo actualizado', remember: 'Lo recordaré',
+  set_day_status: 'Día marcado', delete_item: 'Eliminado', get_todos: 'Recordatorios revisados', add_todos: 'Recordatorios añadidos', update_todo: 'Recordatorio actualizado', indent_todo: 'Recordatorio movido', create_todo_list: 'Lista creada', update_todo_list: 'Lista actualizada', create_goal: 'Objetivo marcado', update_goal: 'Objetivo actualizado', remember: 'Lo recordaré',
 };
 function md(text) {
   const lines = esc(text).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').split('\n');
@@ -1081,7 +1730,8 @@ function agentContext() {
   if (c?.type === 'ms') { const m = byId(S.db.milestones, c.id); if (m) parts.push(`Tiene abierto ${ART[m.kind]} «${m.title}» (id ${m.id}, ${m.date}).`); }
   if (c?.type === 'goal') { const g = byId(S.db.goals || [], c.id); if (g) parts.push(`Tiene abierto el objetivo «${g.title}» (id ${g.id}, ${g.date}).`); }
   if (c?.type === 'day') parts.push(`Tiene abierto el día ${c.date}.`);
-  if (ui.how === 'open') parts.push('Está mirando «¿Cómo vas?».');
+  if (ui.how === 'open' && ui.howView === 'todo') parts.push(ui.rm.list ? `Está en Recordatorios, en «${RM_SMART[ui.rm.list]?.name || rmListOf(rmCurList()).name}»${rmCurList() ? ` (listId ${rmCurList()})` : ''}.` : 'Está en Recordatorios.');
+  else if (ui.how === 'open') parts.push('Está mirando «¿Cómo vas?».');
   return parts.join(' ');
 }
 async function sendAgent() {
@@ -1114,13 +1764,13 @@ function popCheck(el, done) {
   void el.offsetWidth;
   el.classList.add('pop');
   if (done) {
-    const r = el.querySelector('.check').getBoundingClientRect();
+    const r = (el.querySelector('.check') || el).getBoundingClientRect();
     burst(r.left + r.width / 2, r.top + r.height / 2, getComputedStyle(el).getPropertyValue('--c').trim() || '#d97757');
   }
 }
 const actions = {
   month: (el) => changeMonth(+el.dataset.d),
-  today: () => { ui.selDate = S.today; return goMonth(S.today.slice(0, 8) + '01', S.today < ui.month ? -1 : 1); },
+  today: () => { return goMonth(S.today.slice(0, 8) + '01', S.today < ui.month ? -1 : 1); },
   demo: async () => { await api.demo(); await refresh(); toast(`${icon('spark', 14)} Ejemplo cargado`); },
   open: (el) => {
     const v = { type: el.dataset.type, id: el.dataset.id };
@@ -1129,9 +1779,11 @@ const actions = {
     openCard(v, el);
   },
   'open-day': (el) => { if (ui.card) return closeCard(); openCard({ type: 'day', date: el.dataset.date }, el); },
+  'day-step': (el) => stepDay(+el.dataset.d),
+  'day-todo': (el) => { const date = el.dataset.date; closeCard(true); ui.rm.list = 'inbox'; openHow('todo'); ui.rm.draft = { parentId: null, afterId: 'end', listId: null, preset: { due: date } }; rmRender('[data-key="td-draft"] .rm-t'); },
   new: (el) => openCard({ type: el.dataset.type }, el),
-  swap: (el) => { const back = ui.card; swapCard({ type: el.dataset.type, id: el.dataset.id, date: el.dataset.date, ms: el.dataset.ms }); ui.card.back = back; },
-  'card-back': () => { const back = ui.card?.back; if (!back) return closeCard(); swapCard(back); ui.card.back = back.back; },
+  swap: (el) => { const back = ui.card; swapCard({ type: el.dataset.type, id: el.dataset.id, date: el.dataset.date, ms: el.dataset.ms }); ui.card.back = back; $('#card').classList.toggle('has-back', !!back); },
+  'card-back': () => { const back = ui.card?.back; if (!back) return closeCard(); S.web ? swapSheet(back, -1) : swapCard(back); ui.card.back = back.back; $('#card').classList.toggle('has-back', !!back.back); },
   'close-card': () => closeCard(),
   'toggle-task': async (el, e) => {
     if (e.target.closest('.x')) return;
@@ -1188,7 +1840,7 @@ const actions = {
     btn?.style.setProperty('--c', el.dataset.c);
     $$('.palette button', el.parentNode).forEach((b) => b.classList.toggle('on', b === el));
     el.parentNode.classList.add('folding');
-    await run(el.dataset.kind === 'sub' ? 'update_subscription' : 'update_project', { id: el.dataset.id, color: el.dataset.c });
+    await run(el.dataset.kind === 'sub' ? 'update_subscription' : el.dataset.kind === 'todoList' ? 'update_todo_list' : 'update_project', { id: el.dataset.id, color: el.dataset.c });
     setTimeout(async () => {
       ui.colorFor = null;
       await refresh();
@@ -1247,17 +1899,46 @@ const actions = {
   'cloud-signup': () => cloudAuth('up'),
   'cloud-sync': async () => { await api.cloudSync(); await refresh(); renderHow(true); },
   'cloud-signout': (el) => confirmIn(el, async () => { await api.cloudSignOut(); await refresh(); renderHow(true); }),
-  msel: (el) => {
-    if (ui.selDate === el.dataset.date) return openCard({ type: 'day', date: el.dataset.date }, el); // segundo toque: el día completo
-    const prevSel = $('.mday.sel');
-    prevSel?.classList.remove('sel');
-    el.classList.add('sel');
-    ui.selDate = el.dataset.date;
-    if (parse(ui.selDate).getMonth() !== parse(ui.month).getMonth()) return goMonth(ui.selDate.slice(0, 8) + '01', ui.selDate < ui.month ? -1 : 1);
-    renderAgenda();
-  },
-  'm-new': () => openCard({ type: 'day', date: ui.selDate || S.today }, document.body),
   'how-open': () => openHow(),
+  'rm-go': () => { ui.rm.list = ui.rm.list || null; openHow('todo'); },
+  'rm-open': (el) => { ui.rm.list = el.dataset.l || null; ui.rm.detail = null; ui.rm.draft = null; ui.rm.q = ''; ui.colorFor = null; renderHow(true); $('.how-body').scrollTop = 0; },
+  'rm-check': (el) => rmToggle(el, el.dataset.id),
+  'rm-toggle': (el) => rmToggle(el, el.dataset.id),
+  'rm-fold': async (el) => { const t = byId(rmAll(), el.dataset.id); await run('update_todo', { id: t.id, collapsed: !t.collapsed }); rmReload(); },
+  'rm-detail': (el) => { ui.rm.detail = ui.rm.detail === el.dataset.id ? null : el.dataset.id; renderHow(true); },
+  'rm-new': () => rmStartDraft(null),
+  'rm-showdone': () => { ui.rm.showDone = !ui.rm.showDone; renderHow(true); },
+  'rm-due': async (el) => { await run('update_todo', { id: el.dataset.id, due: el.dataset.v === '' ? '' : addDays(S.today, +el.dataset.v) }); rmReload(); },
+  'rm-pri': async (el) => { await run('update_todo', { id: el.dataset.id, priority: +el.dataset.v }); rmReload(); },
+  'rm-flag': async (el) => { const t = byId(rmAll(), el.dataset.id); await run('update_todo', { id: t.id, flagged: !t.flagged }); rmReload(); },
+  'rm-indent': async (el) => { try { await run('indent_todo', { id: el.dataset.id, outdent: !!el.dataset.out }); } catch {} rmReload(); },
+  'rm-del': async (el) => { if (ui.rm.detail === el.dataset.id) ui.rm.detail = null; await run('delete_item', { type: 'todo', id: el.dataset.id }); rmReload(); },
+  'rm-goto': (el) => { const t = byId(rmAll(), el.dataset.id); if (!t) return; ui.rm.list = t.listId || 'inbox'; ui.rm.detail = t.id; openHow('todo'); },
+  'rm-list-menu': (el, e) => {
+    const id = el.dataset.id;
+    const r = el.getBoundingClientRect();
+    openCtx(r.left, r.bottom + 4, [
+      { label: 'Cambiar color', icon: 'sun', run: () => { ui.colorFor = ui.colorFor === id ? null : id; renderHow(true); } },
+      { label: ui.rm.showDone ? 'Ocultar completados' : 'Mostrar completados', icon: 'check', run: () => actions['rm-showdone']() },
+      '-',
+      { label: 'Eliminar lista y sus recordatorios', icon: 'trash', danger: true, run: async () => { await run('delete_item', { type: 'todoList', id }); ui.rm.list = null; rmReload(); } },
+    ]);
+  },
+  'mcp-create': (el) => {
+    const go = async () => {
+      el.disabled = true;
+      try {
+        const url = await api.mcpLinkCreate();
+        api.copy(url);
+        toast(`${icon('check', 14)} Enlace creado y copiado`, 3500);
+      } catch (e) { toast(esc(cleanErr(e)), 4000); }
+      loadMcp();
+    };
+    return mcpCache ? confirmIn(el, go) : go();
+  },
+  'mcp-copy': () => { if (mcpCache?.url) { api.copy(mcpCache.url); toast(`${icon('check', 14)} Enlace copiado`); } },
+  'mcp-revoke': (el) => confirmIn(el, async () => { await api.mcpLinkRevoke(); toast('Enlace desactivado'); loadMcp(); }),
+  'mcp-reload': () => loadMcp(),
   'check-account': async () => { const a = await api.checkAccount(); toast(a.ok ? `${icon('check', 14)} Cuenta de Claude conectada` : 'No hay sesión de Claude en este PC'); await refresh(); renderHow(); },
   forget: async (el) => { await api.forget(el.dataset.id); memCache = await api.memories(); renderHow(); },
   'copy-mcp': async () => { api.copy(JSON.stringify(await api.mcpConfig(), null, 2)); toast(`${icon('check', 14)} Configuración MCP copiada`); },
@@ -1434,6 +2115,12 @@ document.addEventListener('keydown', async (e) => {
     const kind = inp.dataset.add;
     if (kind === 'task') await run('add_tasks', { topicId: inp.dataset.topic, titles: v.split(/\s*;\s*/) });
     if (kind === 'topic') await run('add_topic', { projectId: inp.dataset.project, milestoneId: inp.dataset.ms || undefined, title: v });
+    if (kind === 'todo-list') {
+      const l = await run('create_todo_list', { name: v });
+      ui.rm.list = l.id;
+      await refresh();
+      return rmStartDraft(null);
+    }
     if (kind === 'layer') {
       await run('create_layer', { name: v, projectIds: [] });
       await refresh();
@@ -1468,35 +2155,43 @@ document.addEventListener('keydown', async (e) => {
   if (e.key === 'ArrowLeft') changeMonth(-1);
   else if (e.key === 'ArrowRight') changeMonth(1);
   else if (e.key === '/') { e.preventDefault(); openAgent(); }
+  else if (e.key.toLowerCase() === 'r' && !e.ctrlKey && !e.metaKey) actions['rm-go']();
 });
 
-// Móvil: deslizar a los lados cambia de mes
-let touch0 = null;
-$('#cal').addEventListener('touchstart', (e) => (touch0 = e.touches[0] && { x: e.touches[0].clientX, y: e.touches[0].clientY, t: Date.now() }), { passive: true });
-$('#cal').addEventListener('touchend', (e) => {
-  const t = e.changedTouches[0];
-  if (!touch0 || !t || ui.card || pdrag?.started || Date.now() - lastDragEnd < 400) return;
-  const dx = t.clientX - touch0.x, dy = t.clientY - touch0.y;
-  if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5 && Date.now() - touch0.t < 600) changeMonth(dx < 0 ? 1 : -1);
-  touch0 = null;
-}, { passive: true });
+// Móvil: el mes sigue al dedo (ver monthSwipeInit)
+monthSwipeInit();
 
-// Rueda = cambiar de mes
-let wheelLock = 0;
+// Rueda = cambiar de mes. Sin bloqueo: cada muesca cuenta aunque siga la animación;
+// el touchpad acumula delta hasta sumar una muesca
+let wheelAcc = 0, wheelT;
 $('#cal').addEventListener('wheel', (e) => {
-  if (ui.card || Math.abs(e.deltaY) < 30 || Date.now() < wheelLock) return;
-  wheelLock = Date.now() + 450;
-  changeMonth(e.deltaY > 0 ? 1 : -1);
+  if (ui.card) return;
+  const dy = e.deltaMode === 1 ? e.deltaY * 33 : e.deltaY; // en líneas → px
+  if (!dy) return;
+  clearTimeout(wheelT);
+  wheelT = setTimeout(() => (wheelAcc = 0), 250);
+  if (Math.abs(dy) >= 50) { wheelAcc = 0; return changeMonth(Math.sign(dy)); } // muesca de ratón = un mes
+  if (Math.sign(dy) !== Math.sign(wheelAcc)) wheelAcc = 0; // cambio de sentido: responde al instante
+  wheelAcc += dy;
+  while (Math.abs(wheelAcc) >= 80) {
+    const d = Math.sign(wheelAcc);
+    wheelAcc -= d * 80;
+    changeMonth(d);
+  }
 }, { passive: true });
 function changeMonth(d) {
   const m = parse(ui.month);
   m.setMonth(m.getMonth() + d);
   return goMonth(iso(m), d);
 }
+let goSeq = 0;
 async function goMonth(month, d) {
   closeCard(true);
   ui.month = month;
-  S = await api.state(gridRange());
+  const seq = ++goSeq;
+  const st = await api.state(gridRange());
+  if (seq !== goSeq) return; // ya se pidió otro mes: descarta esta respuesta
+  S = st;
   renderHead();
   $('#mname').classList.add(d < 0 ? 'l' : 'r');
   renderCal(d);
@@ -1687,7 +2382,7 @@ const RIPPLE = 'button, .list-row, .task, .pchip, .bar, .cell, .layer-pill, .top
 window.addEventListener('pointerdown', (e) => {
   const el = e.target.closest(RIPPLE);
   if (!el || e.target.closest('input, textarea, select')) return;
-  if (S?.web && el.matches('.mday, #mbar button, .mh-btn, .mh-year, .acheck')) return; // en el móvil, la pulsación propia de iOS
+  if (el.matches('.rm-check, .rm-fold, .rm-info, .rm-bar button') || (S?.web && el.matches('.cell, .bar, .acheck, .rm-tile, .rm-lrow, .df-add button'))) return; // en el móvil, la pulsación propia de iOS
   const r = el.getBoundingClientRect();
   const cs = getComputedStyle(el);
   const clip = document.createElement('div');
@@ -1794,6 +2489,28 @@ function ctxFor(target) {
     }
     if (type === 'ext') return [{ label: 'Ver detalles', icon: 'arrow', run: () => open('ext') }];
   }
+  const rmr = target.closest('.rm-row:not(.draft), .task[data-act="rm-toggle"]');
+  if (rmr) {
+    const t = byId(rmAll(), rmr.dataset.id);
+    if (t) {
+      const up = (patch) => run('update_todo', { id: t.id, ...patch }).then(() => rmReload());
+      const lists = [INBOX, ...(S.db.todoLists || [])].filter((l) => l.id !== (t.listId || 'inbox'));
+      return [
+        { label: t.done ? 'Marcar como pendiente' : 'Marcar como hecho', icon: 'check', run: () => rmToggle(rmr.querySelector('.rm-check') || rmr, t.id) },
+        { label: 'Detalles', icon: 'info', run: () => (rmr.classList.contains('task') ? actions['rm-goto']({ dataset: { id: t.id } }) : actions['rm-detail']({ dataset: { id: t.id } })) },
+        '-',
+        { label: 'Para hoy', icon: 'cal', on: t.due === S.today, run: () => up({ due: t.due === S.today ? '' : S.today }) },
+        { label: 'Mañana', icon: 'clock', on: t.due === addDays(S.today, 1), run: () => up({ due: addDays(S.today, 1) }) },
+        { label: t.flagged ? 'Quitar bandera' : 'Bandera', icon: 'flag', on: t.flagged, run: () => up({ flagged: !t.flagged }) },
+        '-',
+        { label: 'Sangrar', icon: 'indent', k: 'Tab', run: () => run('indent_todo', { id: t.id }).then(() => rmReload(), () => {}) },
+        ...(t.parentId ? [{ label: 'Quitar sangría', icon: 'outdent', k: 'Mayús+Tab', run: () => run('indent_todo', { id: t.id, outdent: true }).then(() => rmReload()) }] : []),
+        ...(lists.length ? ['-', { h: 'Mover a' }, ...lists.map((l) => ({ label: l.name, icon: 'list', run: () => up({ listId: l.id }) }))] : []),
+        '-',
+        { label: 'Eliminar', icon: 'trash', danger: true, run: () => run('delete_item', { type: 'todo', id: t.id }).then(() => rmReload()) },
+      ];
+    }
+  }
   const task = target.closest('.task[data-act="toggle-task"]');
   if (task) {
     const t = byId(S.db.tasks, task.dataset.id);
@@ -1811,7 +2528,7 @@ function ctxFor(target) {
     return items;
   }
   // En cualquier otro sitio: navegación, capas y la propia app
-  const items = [{ label: 'Hoy', icon: 'cal', k: 'T', run: () => actions.today() }, { label: '¿Cómo vas?', icon: 'sun', run: () => openHow() }];
+  const items = [{ label: 'Hoy', icon: 'cal', k: 'T', run: () => actions.today() }, { label: '¿Cómo vas?', icon: 'sun', run: () => openHow() }, { label: 'Recordatorios', icon: 'checklist', k: 'R', run: () => actions['rm-go']() }];
   if ((S.db.layers || []).length) items.push('-', { h: 'Capa' }, { label: 'Todo', icon: 'layers', on: ui.layer === 'all', run: () => actions['set-layer']({ dataset: { id: 'all' } }) }, ...S.db.layers.map((l) => ({ label: l.name, icon: 'layers', on: ui.layer === l.id, run: () => actions['set-layer']({ dataset: { id: l.id } }) })));
   if (!S.web) {
     const cur = S.db.settings.mode || 'tray';
@@ -1836,13 +2553,18 @@ document.addEventListener('pointermove', (e) => { if (press && e.pointerType ===
 
 // ---------- Arrastre propio de barras (bloques, objetivos, exámenes) ----------
 let pdrag = null, lastDragEnd = 0;
+let holdT = 0;
 weeksEl.addEventListener('pointerdown', (e) => {
   if (e.button !== 0) return;
   const bar = e.target.closest('.bar');
   if (!bar || !['block', 'goal', 'ms'].includes(bar.dataset.type)) return;
   const cell = $$('.cell', bar.closest('.week'))[colAt(e.clientX)];
-  pdrag = { bar, type: bar.dataset.type, id: bar.dataset.id, x0: e.clientX, y0: e.clientY, from: cell?.dataset.date, started: false };
+  const arm = () => (pdrag = { bar, type: bar.dataset.type, id: bar.dataset.id, x0: e.clientX, y0: e.clientY, from: cell?.dataset.date, started: false });
+  if (e.pointerType !== 'touch') return arm();
+  clearTimeout(holdT);
+  holdT = setTimeout(() => { if (!mswipe?.on) { arm(); bar.classList.add('armed'); navigator.vibrate?.(10); } }, 300);
 });
+['pointerup', 'pointercancel'].forEach((ev) => window.addEventListener(ev, () => { clearTimeout(holdT); $$('.bar.armed').forEach((b) => b.classList.remove('armed')); }));
 const colAt = (x) => Math.max(0, Math.min(6, Math.floor(((x - weeksEl.getBoundingClientRect().left) / weeksEl.clientWidth) * 7)));
 function dragFrame() {
   if (!pdrag?.started) return;
